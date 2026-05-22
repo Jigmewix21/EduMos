@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "EduMos Web2",
+    "slug": "edumos-web2",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["web", "ios", "android"],
+    "android": {
+      "package": "com.edumos.offlinelearning",
+      "versionCode": 1
+    },
+    "ios": {
+      "bundleIdentifier": "com.edumos.offlinelearning"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "extra": {
+      "apiBaseUrl": "$EXPO_PUBLIC_API_BASE_URL"
+    }
+  }
+}

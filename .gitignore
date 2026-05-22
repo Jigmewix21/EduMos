@@ -1,0 +1,6 @@
+node_modules
+dist
+.expo
+.env
+npm-debug.log
+firebase-debug.log
