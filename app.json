@@ -4,10 +4,21 @@
     "slug": "edumos-web2",
     "version": "1.0.0",
     "orientation": "portrait",
-    "platforms": ["web", "ios", "android"],
+    "platforms": [
+      "web",
+      "ios",
+      "android"
+    ],
+    "splash": {
+      "backgroundColor": "#f8fafc",
+      "resizeMode": "contain"
+    },
     "android": {
       "package": "com.edumos.offlinelearning",
-      "versionCode": 1
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#2563eb"
+      }
     },
     "ios": {
       "bundleIdentifier": "com.edumos.offlinelearning"
@@ -17,7 +28,11 @@
       "output": "single"
     },
     "extra": {
-      "apiBaseUrl": "$EXPO_PUBLIC_API_BASE_URL"
-    }
+      "apiBaseUrl": "$EXPO_PUBLIC_API_BASE_URL",
+      "eas": {
+        "projectId": "f8c2c501-2499-4f54-9886-ed9d0cc8d7f4"
+      }
+    },
+    "owner": "jigmewix21"
   }
 }

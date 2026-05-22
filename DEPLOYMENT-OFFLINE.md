@@ -18,7 +18,7 @@ EXPO_PUBLIC_FIREBASE_PROJECT_ID=
 EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
 EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 EXPO_PUBLIC_FIREBASE_APP_ID=
-EXPO_PUBLIC_API_BASE_URL=https://your-render-backend.onrender.com
+EXPO_PUBLIC_API_BASE_URL=https://edumos-backend.onrender.com
 ```
 
 Vercel settings:
@@ -38,7 +38,7 @@ Required Firebase Admin variables on Render:
 FIREBASE_PROJECT_ID=
 FIREBASE_CLIENT_EMAIL=
 FIREBASE_PRIVATE_KEY=
-FRONTEND_ORIGIN=https://your-vercel-domain.vercel.app
+FRONTEND_ORIGIN=https://edu-mos.vercel.app
 ```
 
 ## Android APK
