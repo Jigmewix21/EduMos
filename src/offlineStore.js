@@ -108,7 +108,7 @@ export function queueWrite(write) {
   setOfflineStore(store => ({
     ...store,
     pendingWrites: [
-      ...(store.pendingWrites || []),
+      ...(store.pendingWrites || []).filter(item => !write.localId || item.localId !== write.localId),
       {
         ...write,
         queuedAt: Date.now(),

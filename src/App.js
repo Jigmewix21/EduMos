@@ -1351,7 +1351,7 @@ function Participants({ classroom }) {
   async function refresh() {
     const hostUrl = getOfflineStore().teacherHostUrls?.[classroom.id];
     if (hostUrl) {
-      await fetchTeacherHostSnapshot(hostUrl, classroom.id).catch(() => null);
+      await fetchTeacherHostSnapshot(hostUrl, classroom.id, { queueForSync: true }).catch(() => null);
     }
     const nextParticipants = await listParticipants(classroom.id);
     setParticipants(nextParticipants);
@@ -1390,6 +1390,10 @@ function Grades({ classroom, student, editable }) {
   async function refresh() {
     if (student && classroom.teacherHostUrl) {
       await fetchTeacherHostSnapshot(classroom.teacherHostUrl, classroom.id).catch(() => null);
+    }
+    if (editable) {
+      const hostUrl = getOfflineStore().teacherHostUrls?.[classroom.id];
+      if (hostUrl) await fetchTeacherHostSnapshot(hostUrl, classroom.id, { queueForSync: true }).catch(() => null);
     }
     const [nextGrades, nextColumns, nextParticipants] = await Promise.all([
       listGrades(classroom.id),

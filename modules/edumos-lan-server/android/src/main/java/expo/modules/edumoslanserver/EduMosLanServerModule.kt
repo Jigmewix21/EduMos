@@ -1,5 +1,6 @@
 package expo.modules.edumoslanserver
 
+import android.content.Context
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -32,7 +33,8 @@ class EduMosLanServerModule : Module() {
       try {
         stopServerInternal()
         port = requestedPort
-        packageJson = JSONObject(payload)
+        packageJson = mergeSavedStudentChanges(JSONObject(payload))
+        persistPackage()
         serverSocket = ServerSocket(port)
         running.set(true)
         serverThread = thread(start = true, name = "EduMosLanServer") {
@@ -145,6 +147,7 @@ class EduMosLanServerModule : Module() {
         removeById(participants, participant.optString("studentId", participant.optString("id")))
         participants.put(participant.put("classroomId", classroomId).put("receivedAt", System.currentTimeMillis()))
         packageJson.put("participants", participants)
+        persistPackage()
         writeJson(output, 200, JSONObject().put("ok", true).put("id", participant.optString("studentId", participant.optString("id"))))
       }
       method == "POST" && path == "/api/offline/classrooms/$classroomId/grades" -> {
@@ -154,6 +157,7 @@ class EduMosLanServerModule : Module() {
         removeById(grades, id)
         grades.put(grade.put("id", id).put("classroomId", classroomId).put("receivedAt", System.currentTimeMillis()))
         packageJson.put("grades", grades)
+        persistPackage()
         writeJson(output, 200, JSONObject().put("ok", true).put("id", id))
       }
       else -> {
@@ -181,6 +185,51 @@ class EduMosLanServerModule : Module() {
       serverSocket?.close()
     } catch (_error: Exception) {}
     serverSocket = null
+  }
+
+  private fun persistPackage() {
+    val prefs = appContext.reactContext?.getSharedPreferences("edumos_lan_server", Context.MODE_PRIVATE) ?: return
+    prefs.edit().putString("hosted_package", packageJson.toString()).apply()
+  }
+
+  private fun mergeSavedStudentChanges(nextPackage: JSONObject): JSONObject {
+    val prefs = appContext.reactContext?.getSharedPreferences("edumos_lan_server", Context.MODE_PRIVATE) ?: return nextPackage
+    val savedRaw = prefs.getString("hosted_package", null) ?: return nextPackage
+    val saved = try {
+      JSONObject(savedRaw)
+    } catch (_error: Exception) {
+      return nextPackage
+    }
+    val nextClassroomId = nextPackage.optJSONObject("classroom")?.optString("id") ?: ""
+    val savedClassroomId = saved.optJSONObject("classroom")?.optString("id") ?: ""
+    if (nextClassroomId.isEmpty() || nextClassroomId != savedClassroomId) return nextPackage
+
+    nextPackage.put("participants", mergeArrays(saved.optJSONArray("participants"), nextPackage.optJSONArray("participants"), true))
+    nextPackage.put("grades", mergeArrays(saved.optJSONArray("grades"), nextPackage.optJSONArray("grades"), false))
+    return nextPackage
+  }
+
+  private fun mergeArrays(saved: JSONArray?, fresh: JSONArray?, participantMode: Boolean): JSONArray {
+    val merged = JSONArray()
+    val seen = mutableSetOf<String>()
+    fun addItems(items: JSONArray?) {
+      if (items == null) return
+      for (index in 0 until items.length()) {
+        val item = items.optJSONObject(index) ?: continue
+        val id = if (participantMode) {
+          item.optString("studentId", item.optString("id"))
+        } else {
+          item.optString("id")
+        }
+        if (id.isNotEmpty() && !seen.contains(id)) {
+          seen.add(id)
+          merged.put(item)
+        }
+      }
+    }
+    addItems(fresh)
+    addItems(saved)
+    return merged
   }
 
   private fun getWifiAddresses(): List<String> {

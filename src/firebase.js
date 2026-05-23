@@ -635,7 +635,7 @@ export async function scanTeacherHosts(classroomId = "", extraHosts = []) {
   return found;
 }
 
-export async function fetchTeacherHostSnapshot(hostUrl, classroomId) {
+export async function fetchTeacherHostSnapshot(hostUrl, classroomId, options = {}) {
   const cleanUrl = normalizeHostUrl(hostUrl);
   if (!cleanUrl || !classroomId) return null;
   const payload = await fetchClassroomPackage(cleanUrl, classroomId, "Could not refresh teacher group");
@@ -646,9 +646,30 @@ export async function fetchTeacherHostSnapshot(hostUrl, classroomId) {
     (section.resources || []).forEach(resource => cacheResource(classroomId, section.id, resource));
     (section.quizzes || []).forEach(quiz => cacheQuiz(classroomId, section.id, quiz));
   });
-  (payload.participants || []).forEach(participant => cacheParticipant(classroomId, participant));
+  (payload.participants || []).forEach(participant => {
+    const studentId = participant.studentId || participant.id;
+    cacheParticipant(classroomId, participant);
+    if (options.queueForSync && studentId) {
+      queueWrite({
+        localId: `teacherHost_${classroomId}_participant_${studentId}`,
+        action: "setParticipant",
+        classroomId,
+        participant: { ...participant, studentId, classroomId }
+      });
+    }
+  });
   (payload.gradeColumns || []).forEach(column => cacheGradeColumn(classroomId, column));
-  (payload.grades || []).forEach(grade => cacheGrade(classroomId, grade));
+  (payload.grades || []).forEach(grade => {
+    cacheGrade(classroomId, grade);
+    if (options.queueForSync && grade.id) {
+      queueWrite({
+        localId: `teacherHost_${classroomId}_grade_${grade.id}`,
+        action: "setGrade",
+        classroomId,
+        grade: { ...grade, classroomId }
+      });
+    }
+  });
   return payload;
 }
 
