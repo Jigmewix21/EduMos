@@ -256,6 +256,20 @@ export async function listSections(classroomId) {
   }, () => Object.values(getCollection("sections")).filter(item => item.classroomId === classroomId));
 }
 
+export async function deleteSection(classroomId, sectionId) {
+  deleteCollectionItem("sections", keyOf(classroomId, sectionId));
+  Object.values(getCollection("resources"))
+    .filter(item => item.classroomId === classroomId && item.sectionId === sectionId)
+    .forEach(item => deleteCollectionItem("resources", keyOf(classroomId, sectionId, item.id)));
+  Object.values(getCollection("quizzes"))
+    .filter(item => item.classroomId === classroomId && item.sectionId === sectionId)
+    .forEach(item => deleteCollectionItem("quizzes", keyOf(classroomId, sectionId, item.id)));
+  return tryFirestore(
+    () => deleteDoc(doc(db, "classrooms", classroomId, "sections", sectionId)),
+    () => queueWrite({ action: "deleteSection", classroomId, sectionId })
+  );
+}
+
 export async function saveResource(classroomId, sectionId, resource) {
   const saved = {
     id: localId("resource"),
@@ -281,6 +295,14 @@ export async function listResources(classroomId, sectionId) {
     resources.forEach(item => cacheResource(classroomId, sectionId, item));
     return resources;
   }, () => Object.values(getCollection("resources")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId));
+}
+
+export async function deleteResource(classroomId, sectionId, resourceId) {
+  deleteCollectionItem("resources", keyOf(classroomId, sectionId, resourceId));
+  return tryFirestore(
+    () => deleteDoc(doc(db, "classrooms", classroomId, "sections", sectionId, "resources", resourceId)),
+    () => queueWrite({ action: "deleteResource", classroomId, sectionId, resourceId })
+  );
 }
 
 export async function createQuiz(classroomId, sectionId, quiz) {
@@ -321,6 +343,14 @@ export async function listQuizzes(classroomId, sectionId) {
   }, () => Object.values(getCollection("quizzes")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId));
 }
 
+export async function deleteQuiz(classroomId, sectionId, quizId) {
+  deleteCollectionItem("quizzes", keyOf(classroomId, sectionId, quizId));
+  return tryFirestore(
+    () => deleteDoc(doc(db, "classrooms", classroomId, "sections", sectionId, "quizzes", quizId)),
+    () => queueWrite({ action: "deleteQuiz", classroomId, sectionId, quizId })
+  );
+}
+
 export async function saveGrade(classroomId, studentId, columnName, value) {
   const grade = {
     id: `${studentId}_${columnName}`,
@@ -344,6 +374,14 @@ export async function listGrades(classroomId) {
     grades.forEach(item => cacheGrade(classroomId, item));
     return grades;
   }, () => Object.values(getCollection("grades")).filter(item => item.classroomId === classroomId));
+}
+
+export async function deleteGrade(classroomId, gradeId) {
+  deleteCollectionItem("grades", keyOf(classroomId, gradeId));
+  return tryFirestore(
+    () => deleteDoc(doc(db, "classrooms", classroomId, "grades", gradeId)),
+    () => queueWrite({ action: "deleteGrade", classroomId, gradeId })
+  );
 }
 
 export async function createGradeColumn(classroomId, name) {
@@ -512,8 +550,14 @@ async function applyPendingWrite(write) {
   if (write.action === "setSection") {
     await setDoc(doc(db, "classrooms", write.classroomId, "sections", write.section.id), write.section);
   }
+  if (write.action === "deleteSection") {
+    await deleteDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId));
+  }
   if (write.action === "setResource") {
     await setDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId, "resources", write.resource.id), write.resource);
+  }
+  if (write.action === "deleteResource") {
+    await deleteDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId, "resources", write.resourceId));
   }
   if (write.action === "setQuiz") {
     await setDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId, "quizzes", write.quiz.id), write.quiz);
@@ -521,8 +565,14 @@ async function applyPendingWrite(write) {
   if (write.action === "updateQuiz") {
     await updateDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId, "quizzes", write.quizId), write.patch);
   }
+  if (write.action === "deleteQuiz") {
+    await deleteDoc(doc(db, "classrooms", write.classroomId, "sections", write.sectionId, "quizzes", write.quizId));
+  }
   if (write.action === "setGrade") {
     await setDoc(doc(db, "classrooms", write.classroomId, "grades", write.grade.id), write.grade);
+  }
+  if (write.action === "deleteGrade") {
+    await deleteDoc(doc(db, "classrooms", write.classroomId, "grades", write.gradeId));
   }
   if (write.action === "setGradeColumn") {
     await setDoc(doc(db, "classrooms", write.classroomId, "gradeColumns", write.column.id), write.column);
