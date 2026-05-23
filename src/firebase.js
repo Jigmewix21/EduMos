@@ -24,7 +24,7 @@ import {
   setCollectionItem,
   setOfflineStore
 } from "./offlineStore";
-import { firebaseConfig } from "./config";
+import { apiBaseUrl, firebaseConfig } from "./config";
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
@@ -37,6 +37,14 @@ const keyOf = (...parts) => parts.join("__");
 const localId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const FIREBASE_TIMEOUT_MS = 10000;
 const LOCAL_HOST_TIMEOUT_MS = 12000;
+const COMMON_TEACHER_HOSTS = [
+  apiBaseUrl,
+  "http://192.168.43.1:10000",
+  "http://192.168.49.1:10000",
+  "http://192.168.4.1:10000",
+  "http://172.20.10.1:10000",
+  "http://10.0.0.1:10000"
+];
 
 function withTimeout(promise, ms, message) {
   return Promise.race([
@@ -508,6 +516,18 @@ export async function getClassroomOfflinePackage(classroomId) {
 
 export async function deleteStudentCourse(classroomId, studentId) {
   deleteCollectionItem("participants", keyOf(classroomId, studentId));
+  Object.values(getCollection("sections"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("sections", keyOf(classroomId, item.id)));
+  Object.values(getCollection("resources"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("resources", keyOf(classroomId, item.sectionId, item.id)));
+  Object.values(getCollection("quizzes"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("quizzes", keyOf(classroomId, item.sectionId, item.id)));
+  Object.values(getCollection("grades"))
+    .filter(item => item.classroomId === classroomId && item.studentId === studentId)
+    .forEach(item => deleteCollectionItem("grades", keyOf(classroomId, item.id)));
   setOfflineStore(store => {
     const connectedPackages = { ...(store.connectedPackages || {}) };
     delete connectedPackages[classroomId];
@@ -575,20 +595,72 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   return result;
 }
 
+export async function scanTeacherHosts(classroomId = "", extraHosts = []) {
+  const hostCandidates = Array.from(new Set([
+    ...extraHosts,
+    ...(Object.values(getOfflineStore().teacherHostUrls || {})),
+    ...COMMON_TEACHER_HOSTS
+  ].map(normalizeHostUrl).filter(Boolean)));
+  const cleanClassroomId = classroomId.trim();
+  const found = [];
+
+  await Promise.all(hostCandidates.map(async host => {
+    try {
+      if (cleanClassroomId) {
+        const payload = await fetchClassroomPackage(host, cleanClassroomId);
+        found.push({ hostUrl: host, payload, classroom: payload.classroom, stats: packageStats(payload) });
+        return;
+      }
+      const response = await withTimeout(
+        fetch(`${host}/api/offline/classrooms`),
+        3500,
+        "Teacher host scan timed out"
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      for (const classroom of data.classrooms || []) {
+        found.push({
+          hostUrl: host,
+          classroom,
+          stats: {
+            sections: classroom.sections || 0,
+            resources: classroom.resources || 0,
+            quizzes: classroom.quizzes || 0
+          }
+        });
+      }
+    } catch (_error) {}
+  }));
+
+  return found;
+}
+
 export async function fetchTeacherHostSnapshot(hostUrl, classroomId) {
   const cleanUrl = normalizeHostUrl(hostUrl);
   if (!cleanUrl || !classroomId) return null;
-  const response = await withTimeout(
-    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`),
-    LOCAL_HOST_TIMEOUT_MS,
-    "Could not refresh teacher group"
-  );
-  if (!response.ok) throw new Error("Teacher group is not reachable");
-  const payload = await response.json();
+  const payload = await fetchClassroomPackage(cleanUrl, classroomId, "Could not refresh teacher group");
+  payload.classroom = { ...payload.classroom, teacherHostUrl: cleanUrl };
+  cacheClassroom(payload.classroom);
+  (payload.sections || []).forEach(section => {
+    cacheSection(classroomId, section);
+    (section.resources || []).forEach(resource => cacheResource(classroomId, section.id, resource));
+    (section.quizzes || []).forEach(quiz => cacheQuiz(classroomId, section.id, quiz));
+  });
   (payload.participants || []).forEach(participant => cacheParticipant(classroomId, participant));
   (payload.gradeColumns || []).forEach(column => cacheGradeColumn(classroomId, column));
   (payload.grades || []).forEach(grade => cacheGrade(classroomId, grade));
   return payload;
+}
+
+async function fetchClassroomPackage(hostUrl, classroomId, timeoutMessage = "Could not reach teacher group") {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`),
+    LOCAL_HOST_TIMEOUT_MS,
+    timeoutMessage
+  );
+  if (!response.ok) throw new Error("Teacher group is not reachable");
+  return response.json();
 }
 
 function packageStats(payload) {

@@ -45,12 +45,14 @@ import {
   removeParticipant,
   saveGradeCell,
   saveGrade,
+  scanTeacherHosts,
   submitGradeToTeacherHost,
   syncPendingWrites,
   saveResource,
   updateGradeColumn,
   updateQuiz
 } from "./firebase";
+import { apiBaseUrl } from "./config";
 import { getOfflineStore, getPendingWriteCount, isOnline, listenForOnline, setOfflineStore } from "./offlineStore";
 
 const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
@@ -648,16 +650,30 @@ function StudentJoinPanel({ user, onConnected }) {
   const [scanning, setScanning] = useState(false);
   const [nearbyPackages, setNearbyPackages] = useState([]);
 
-  function scanForHosts() {
+  async function scanForHosts() {
     setScanning(true);
-    setConnectMessage("Scanning teacher hotspot groups...");
-    setTimeout(() => {
-      const hosted = getOfflineStore().hostedPackages || {};
-      const packages = Object.values(hosted).filter(item => item?.classroom?.id);
-      setNearbyPackages(packages);
+    setNearbyPackages([]);
+    setConnectMessage(hostClassroomId.trim() ? "Scanning teacher group by course ID..." : "Scanning known teacher hosts...");
+    try {
+      const localPackages = Object.values(getOfflineStore().hostedPackages || {})
+        .filter(item => item?.classroom?.id)
+        .map(payload => ({ payload, classroom: payload.classroom, localPreview: true, stats: countPackageItems(payload) }));
+      const hostPackages = await scanTeacherHosts(hostClassroomId, hostUrl ? [hostUrl] : []);
+      const unique = [];
+      const seen = new Set();
+      for (const item of [...hostPackages, ...localPackages]) {
+        const key = `${item.hostUrl || "local"}__${item.classroom?.id}`;
+        if (seen.has(key) || !item.classroom?.id) continue;
+        seen.add(key);
+        unique.push(item);
+      }
+      setNearbyPackages(unique);
       setScanning(false);
-      setConnectMessage(packages.length ? "Teacher groups found. Tap Join Course." : "No local groups found yet. Connect to teacher hotspot, then use URL/Course ID or package import.");
-    }, 900);
+      setConnectMessage(unique.length ? "Teacher groups found. Tap Join Course." : "No teacher group found. Make sure teacher pressed Host Group and both devices are on the same Wi-Fi/hotspot.");
+    } catch (error) {
+      setScanning(false);
+      setConnectMessage(error.message);
+    }
   }
 
   async function connectByHost() {
@@ -680,12 +696,11 @@ function StudentJoinPanel({ user, onConnected }) {
   function importPackageText(text = packageText) {
     try {
       setConnectMessage("Joining course from package...");
-      const result = importClassroomOfflinePackage(JSON.parse(text), user);
+      const payload = JSON.parse(text);
+      const result = importClassroomOfflinePackage(payload, user);
       if (result.ok) {
-        const sections = JSON.parse(text).sections || [];
-        const resources = sections.reduce((total, section) => total + (section.resources || []).length, 0);
-        const quizzes = sections.reduce((total, section) => total + (section.quizzes || []).length, 0);
-        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${resources} resources and ${quizzes} quizzes. Opening course...`);
+        const stats = countPackageItems(payload);
+        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources and ${stats.quizzes} quizzes. Opening course...`);
       } else {
         setConnectMessage(result.message);
       }
@@ -721,11 +736,25 @@ function StudentJoinPanel({ user, onConnected }) {
       <Button title={scanning ? "Scanning..." : "Scan Nearby Teacher Groups"} onPress={scanForHosts} />
       {!!nearbyPackages.length && (
         <View style={styles.grid}>
-          {nearbyPackages.map(payload => (
-            <Card key={payload.classroom.id} tone="soft">
-              <Title>{payload.classroom.name}</Title>
-              <Text style={styles.bodyText}>Course ID: {payload.classroom.id}</Text>
-              <Button title="Join Course" onPress={() => importPackageText(JSON.stringify(payload))} />
+          {nearbyPackages.map(item => (
+            <Card key={`${item.hostUrl || "local"}_${item.classroom.id}`} tone="soft">
+              <Title>{item.classroom.name}</Title>
+              <Text style={styles.bodyText}>Course ID: {item.classroom.id}</Text>
+              <Text style={styles.bodyText}>{item.stats?.resources || 0} resources | {item.stats?.quizzes || 0} quizzes</Text>
+              <Button title="Join Course" onPress={() => {
+                if (!item.hostUrl) {
+                  importPackageText(JSON.stringify(item.payload));
+                  return;
+                }
+                setHostUrl(item.hostUrl);
+                setHostClassroomId(item.classroom.id);
+                setConnectMessage("Joining teacher course...");
+                connectToTeacherHost(item.hostUrl, item.classroom.id, user).then(result => {
+                  const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+                  setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.` : result.message);
+                  if (result.ok) onConnected(result.classroom);
+                }).catch(error => setConnectMessage(error.message));
+              }} />
             </Card>
           ))}
         </View>
@@ -757,6 +786,15 @@ function GuideStep({ number, title, text }) {
       </View>
     </View>
   );
+}
+
+function countPackageItems(payload) {
+  const sections = payload?.sections || [];
+  return {
+    sections: sections.length,
+    resources: sections.reduce((total, section) => total + (section.resources || []).length, 0),
+    quizzes: sections.reduce((total, section) => total + (section.quizzes || []).length, 0)
+  };
 }
 
 function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
@@ -809,7 +847,7 @@ function TeacherClassroom({ classroom, tab, setTab, onPendingChange }) {
 
 function TeacherHostPanel({ classroom, onPendingChange }) {
   const [packageText, setPackageText] = useState("");
-  const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || "http://localhost:10000");
+  const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || apiBaseUrl || "http://localhost:10000");
   const [hostMessage, setHostMessage] = useState("");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
   async function hostClassroom() {
@@ -855,7 +893,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       </View>
       <View style={styles.hostShareBox}>
         <Text style={styles.howTitle}>Student URL</Text>
-        <Text style={styles.shareCode}>{defaultHost}</Text>
+        <Text style={styles.shareCode}>{localHostUrl || defaultHost}</Text>
         <Text style={styles.howTitle}>Course ID</Text>
         <Text style={styles.shareCode}>{classroom.id}</Text>
       </View>

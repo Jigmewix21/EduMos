@@ -92,6 +92,21 @@ app.post("/api/offline/classrooms/:classroomId", async (req, res) => {
   res.json({ ok: true, classroomId, url: `/api/offline/classrooms/${classroomId}` });
 });
 
+app.get("/api/offline/classrooms", async (_req, res) => {
+  const hub = await readOfflineHub();
+  const classrooms = Object.entries(hub.classrooms || {}).map(([classroomId, payload]) => ({
+    id: classroomId,
+    name: payload?.classroom?.name || "Hosted classroom",
+    enrollmentKey: payload?.classroom?.enrollmentKey || "",
+    exportedAt: payload?.exportedAt || 0,
+    sections: (payload?.sections || []).length,
+    resources: (payload?.sections || []).reduce((total, section) => total + (section.resources || []).length, 0),
+    quizzes: (payload?.sections || []).reduce((total, section) => total + (section.quizzes || []).length, 0)
+  }));
+
+  res.json({ ok: true, classrooms });
+});
+
 app.get("/api/offline/classrooms/:classroomId", async (req, res) => {
   const { classroomId } = req.params;
   const hub = await readOfflineHub();
