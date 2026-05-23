@@ -52,8 +52,8 @@ import {
   updateGradeColumn,
   updateQuiz
 } from "./firebase";
-import { apiBaseUrl } from "./config";
 import { getOfflineStore, getPendingWriteCount, isOnline, listenForOnline, setOfflineStore } from "./offlineStore";
+import { isLanServerAvailable, startLanServer } from "../modules/edumos-lan-server/src";
 
 const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
 const DEFAULT_TEACHER = { email: "teacher@edumos.com", password: "teacher123" };
@@ -847,22 +847,41 @@ function TeacherClassroom({ classroom, tab, setTab, onPendingChange }) {
 
 function TeacherHostPanel({ classroom, onPendingChange }) {
   const [packageText, setPackageText] = useState("");
-  const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || apiBaseUrl || "http://localhost:10000");
+  const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || "http://192.168.43.1:10000");
   const [hostMessage, setHostMessage] = useState("");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
   async function hostClassroom() {
     setHostMessage("Preparing classroom package...");
     const payload = await getClassroomOfflinePackage(classroom.id);
     setPackageText(JSON.stringify(payload));
+    const stats = countPackageItems(payload);
+
+    if (Platform.OS === "android" && isLanServerAvailable()) {
+      try {
+        const started = await startLanServer(10000, payload);
+        if (started.ok) {
+          const hostAddress = started.url || localHostUrl;
+          setLocalHostUrl(hostAddress);
+          setOfflineStore(store => ({
+            ...store,
+            teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
+          }));
+          setHostMessage(`Offline hotspot server started on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students must connect to this teacher hotspot/Wi-Fi, scan, then join.`);
+          onPendingChange?.();
+          return;
+        }
+      } catch (error) {
+        setHostMessage(`Could not start phone hotspot server: ${error.message}. You can still use a local backend URL if one is running.`);
+      }
+    }
+
     setOfflineStore(store => ({
       ...store,
       teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: localHostUrl }
     }));
     try {
       await publishClassroomToTeacherHost(localHostUrl, classroom.id, payload);
-      const resources = payload.sections.reduce((total, section) => total + (section.resources || []).length, 0);
-      const quizzes = payload.sections.reduce((total, section) => total + (section.quizzes || []).length, 0);
-      setHostMessage(`Hosting package ready on ${localHostUrl}. Sharing ${resources} resources and ${quizzes} quizzes. Course ID: ${classroom.id}.`);
+      setHostMessage(`Hosting package ready on ${localHostUrl}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Course ID: ${classroom.id}.`);
     } catch (_error) {
       setHostMessage(`Package ready. Start the local backend or share the package JSON. Course ID: ${classroom.id}.`);
     }
@@ -883,9 +902,10 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     onPendingChange?.();
   }
   return (
-    <Card>
+      <Card>
       <Title>Create Teacher Group</Title>
       <Text style={styles.bodyText}>Share this classroom over hotspot so students can download your lessons and keep them offline.</Text>
+      {Platform.OS !== "android" && <Text style={styles.noticeText}>True phone-to-phone hotspot hosting works in the Android APK. Web preview can prepare packages, but cannot start a phone server.</Text>}
       <View style={styles.stepList}>
         <GuideStep number="1" title="Turn On Hotspot" text="Open hotspot settings and let students connect to your Wi-Fi." />
         <GuideStep number="2" title="Start Group" text="Press Host Group to prepare resources for students." />
