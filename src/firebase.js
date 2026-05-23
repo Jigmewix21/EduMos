@@ -29,7 +29,7 @@ import { firebaseConfig } from "./config";
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-if (typeof globalThis !== "undefined" && typeof window !== "undefined") {
+if (typeof globalThis !== "undefined" && typeof window !== "undefined" && typeof document !== "undefined") {
   enableIndexedDbPersistence(db).catch(() => {});
 }
 

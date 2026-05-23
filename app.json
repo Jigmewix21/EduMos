@@ -2,7 +2,7 @@
   "expo": {
     "name": "EduMos",
     "slug": "edumos-web2",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "platforms": [
       "web",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.edumos.offlinelearning",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#2563eb"
       }

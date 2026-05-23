@@ -56,8 +56,12 @@ const SCREEN_ROUTES = new Set(["home", "about", "login", "signup", "studentSetup
 const userKey = (role, email) => `${role}__${email.trim().toLowerCase()}`;
 const logoImage = require("../assets/edumos-logo.jpeg");
 
+function canUseBrowserHistory() {
+  return Platform.OS === "web" && typeof window !== "undefined" && !!window.history && !!window.location?.href;
+}
+
 function routeForScreen(nextScreen) {
-  if (typeof window === "undefined") return null;
+  if (!canUseBrowserHistory()) return null;
   const url = new URL(window.location.href);
   if (nextScreen === "home") {
     url.searchParams.delete("screen");
@@ -68,8 +72,8 @@ function routeForScreen(nextScreen) {
 }
 
 function initialScreen() {
-  if (typeof window === "undefined") return "home";
-  const fromState = window.history?.state?.edumosScreen;
+  if (!canUseBrowserHistory()) return "home";
+  const fromState = window.history.state?.edumosScreen;
   const fromUrl = new URL(window.location.href).searchParams.get("screen");
   const nextScreen = fromState || fromUrl;
   return SCREEN_ROUTES.has(nextScreen) ? nextScreen : "home";
@@ -95,7 +99,7 @@ export default function App() {
     if (!SCREEN_ROUTES.has(nextScreen)) return;
     screenRef.current = nextScreen;
     setScreen(nextScreen);
-    if (typeof window !== "undefined" && window.history) {
+    if (canUseBrowserHistory()) {
       const nextRoute = routeForScreen(nextScreen);
       const state = { ...(window.history.state || {}), edumosScreen: nextScreen };
       if (options.replace) {
@@ -119,7 +123,7 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !window.history) return undefined;
+    if (!canUseBrowserHistory()) return undefined;
     const currentState = window.history.state || {};
     if (!currentState.edumosScreen) {
       window.history.replaceState({ ...currentState, edumosScreen: screenRef.current }, "", routeForScreen(screenRef.current));
@@ -347,6 +351,13 @@ async function openDeviceSetting(action) {
   } catch (_error) {
     Alert.alert("Open Settings", "Please open your phone settings and turn on Wi-Fi or hotspot manually.");
   }
+}
+
+function confirmDanger(message) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && typeof window.confirm === "function") {
+    return window.confirm(message);
+  }
+  return true;
 }
 
 function NavButton({ title, onPress }) {
@@ -915,13 +926,13 @@ function SectionEditor({ classroom, section, onBack, onDeleted }) {
     refresh();
   }
   async function removeSection() {
-    const ok = typeof window === "undefined" ? true : window.confirm(`Delete section "${section.name}" and its resources/quizzes?`);
+    const ok = confirmDanger(`Delete section "${section.name}" and its resources/quizzes?`);
     if (!ok) return;
     await deleteSection(classroom.id, section.id);
     onDeleted?.();
   }
   async function removeResource(resource) {
-    const ok = typeof window === "undefined" ? true : window.confirm(`Delete resource "${resource.title}"?`);
+    const ok = confirmDanger(`Delete resource "${resource.title}"?`);
     if (!ok) return;
     await deleteResource(classroom.id, section.id, resource.id);
     refresh();
@@ -992,7 +1003,7 @@ function QuizEditor({ classroom, section, quiz, refresh }) {
     refresh();
   }
   async function removeQuiz() {
-    const ok = typeof window === "undefined" ? true : window.confirm(`Delete quiz "${quiz.title}"?`);
+    const ok = confirmDanger(`Delete quiz "${quiz.title}"?`);
     if (!ok) return;
     await deleteQuiz(classroom.id, section.id, quiz.id);
     refresh();
@@ -1182,7 +1193,7 @@ function Participants({ classroom }) {
   }
   useEffect(() => { refresh(); }, [classroom.id]);
   async function removeStudent(item) {
-    const ok = typeof window === "undefined" ? true : window.confirm(`Remove ${item.name} from this class?`);
+    const ok = confirmDanger(`Remove ${item.name} from this class?`);
     if (!ok) return;
     await removeParticipant(classroom.id, item.studentId || item.id);
     refresh();
