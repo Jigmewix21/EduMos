@@ -77,6 +77,13 @@ function cacheGradeColumn(classroomId, column) {
   setCollectionItem("gradeColumns", keyOf(classroomId, column.id), { ...column, classroomId });
 }
 
+function mergeById(remoteItems, localItems) {
+  const merged = new Map();
+  (remoteItems || []).forEach(item => merged.set(item.id, item));
+  (localItems || []).forEach(item => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
 async function tryFirestore(operation, fallback) {
   if (!isOnline()) return fallback();
   try {
@@ -157,7 +164,8 @@ export async function listTeacherClassrooms(teacherId) {
     const snap = await getDocs(query(collection(db, "classrooms"), where("teacherId", "==", teacherId)));
     const classrooms = snap.docs.map(item => ({ id: item.id, ...item.data() }));
     classrooms.forEach(cacheClassroom);
-    return classrooms;
+    const localClassrooms = Object.values(getCollection("classrooms")).filter(item => item.teacherId === teacherId);
+    return mergeById(classrooms, localClassrooms);
   }, () => Object.values(getCollection("classrooms")).filter(item => item.teacherId === teacherId));
 }
 
@@ -209,6 +217,9 @@ export async function listStudentClassrooms(studentId) {
   return tryFirestore(async () => {
     const all = await getDocs(collection(db, "classrooms"));
     const results = [];
+    const localParticipantRooms = Object.values(getCollection("participants"))
+      .filter(item => item.studentId === studentId)
+      .map(item => item.classroomId);
     for (const item of all.docs) {
       const classroom = { id: item.id, ...item.data() };
       cacheClassroom(classroom);
@@ -218,7 +229,8 @@ export async function listStudentClassrooms(studentId) {
         results.push(classroom);
       }
     }
-    return results;
+    const localClassrooms = Object.values(getCollection("classrooms")).filter(item => localParticipantRooms.includes(item.id));
+    return mergeById(results, localClassrooms);
   }, () => {
     const participantRooms = Object.values(getCollection("participants"))
       .filter(item => item.studentId === studentId)
@@ -232,7 +244,8 @@ export async function listParticipants(classroomId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "participants"));
     const participants = snap.docs.map(item => ({ id: item.id, classroomId, ...item.data() }));
     participants.forEach(item => cacheParticipant(classroomId, item));
-    return participants;
+    const localParticipants = Object.values(getCollection("participants")).filter(item => item.classroomId === classroomId);
+    return mergeById(participants, localParticipants);
   }, () => Object.values(getCollection("participants")).filter(item => item.classroomId === classroomId));
 }
 
@@ -266,7 +279,8 @@ export async function listSections(classroomId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "sections"));
     const sections = snap.docs.map(item => ({ id: item.id, classroomId, ...item.data() }));
     sections.forEach(item => cacheSection(classroomId, item));
-    return sections;
+    const localSections = Object.values(getCollection("sections")).filter(item => item.classroomId === classroomId);
+    return mergeById(sections, localSections);
   }, () => Object.values(getCollection("sections")).filter(item => item.classroomId === classroomId));
 }
 
@@ -307,7 +321,8 @@ export async function listResources(classroomId, sectionId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "sections", sectionId, "resources"));
     const resources = snap.docs.map(item => ({ id: item.id, classroomId, sectionId, ...item.data() }));
     resources.forEach(item => cacheResource(classroomId, sectionId, item));
-    return resources;
+    const localResources = Object.values(getCollection("resources")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId);
+    return mergeById(resources, localResources);
   }, () => Object.values(getCollection("resources")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId));
 }
 
@@ -353,7 +368,8 @@ export async function listQuizzes(classroomId, sectionId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "sections", sectionId, "quizzes"));
     const quizzes = snap.docs.map(item => ({ id: item.id, classroomId, sectionId, ...item.data() }));
     quizzes.forEach(item => cacheQuiz(classroomId, sectionId, item));
-    return quizzes;
+    const localQuizzes = Object.values(getCollection("quizzes")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId);
+    return mergeById(quizzes, localQuizzes);
   }, () => Object.values(getCollection("quizzes")).filter(item => item.classroomId === classroomId && item.sectionId === sectionId));
 }
 
@@ -386,7 +402,8 @@ export async function listGrades(classroomId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "grades"));
     const grades = snap.docs.map(item => ({ id: item.id, classroomId, ...item.data() }));
     grades.forEach(item => cacheGrade(classroomId, item));
-    return grades;
+    const localGrades = Object.values(getCollection("grades")).filter(item => item.classroomId === classroomId);
+    return mergeById(grades, localGrades);
   }, () => Object.values(getCollection("grades")).filter(item => item.classroomId === classroomId));
 }
 
@@ -420,7 +437,8 @@ export async function listGradeColumns(classroomId) {
     const snap = await getDocs(collection(db, "classrooms", classroomId, "gradeColumns"));
     const columns = snap.docs.map(item => ({ id: item.id, classroomId, ...item.data() }));
     columns.forEach(item => cacheGradeColumn(classroomId, item));
-    return columns;
+    const localColumns = Object.values(getCollection("gradeColumns")).filter(item => item.classroomId === classroomId);
+    return mergeById(columns, localColumns);
   }, () => Object.values(getCollection("gradeColumns")).filter(item => item.classroomId === classroomId));
 }
 
@@ -488,6 +506,16 @@ export async function getClassroomOfflinePackage(classroomId) {
   return payload;
 }
 
+export async function deleteStudentCourse(classroomId, studentId) {
+  deleteCollectionItem("participants", keyOf(classroomId, studentId));
+  setOfflineStore(store => {
+    const connectedPackages = { ...(store.connectedPackages || {}) };
+    delete connectedPackages[classroomId];
+    return { ...store, connectedPackages };
+  });
+  return { ok: true };
+}
+
 export function importClassroomOfflinePackage(payload, student) {
   if (!payload?.classroom?.id) return { ok: false, message: "Invalid classroom package" };
   const classroom = payload.classroom;
@@ -534,10 +562,42 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   const payload = await response.json();
   payload.classroom = { ...payload.classroom, teacherHostUrl: cleanUrl };
   const result = importClassroomOfflinePackage(payload, student);
+  result.stats = packageStats(payload);
   if (result.ok && result.participant) {
-    await submitParticipantToTeacherHost(cleanUrl, result.classroom.id, result.participant).catch(() => {});
+    try {
+      await submitParticipantToTeacherHost(cleanUrl, result.classroom.id, result.participant);
+      result.teacherSaved = true;
+    } catch (error) {
+      result.teacherSaved = false;
+      result.teacherSaveMessage = error.message;
+    }
   }
   return result;
+}
+
+export async function fetchTeacherHostSnapshot(hostUrl, classroomId) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  if (!cleanUrl || !classroomId) return null;
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not refresh teacher group"
+  );
+  if (!response.ok) throw new Error("Teacher group is not reachable");
+  const payload = await response.json();
+  (payload.participants || []).forEach(participant => cacheParticipant(classroomId, participant));
+  (payload.gradeColumns || []).forEach(column => cacheGradeColumn(classroomId, column));
+  (payload.grades || []).forEach(grade => cacheGrade(classroomId, grade));
+  return payload;
+}
+
+function packageStats(payload) {
+  const sections = payload.sections || [];
+  return {
+    sections: sections.length,
+    resources: sections.reduce((total, section) => total + (section.resources || []).length, 0),
+    quizzes: sections.reduce((total, section) => total + (section.quizzes || []).length, 0)
+  };
 }
 
 export async function submitParticipantToTeacherHost(hostUrl, classroomId, participant) {

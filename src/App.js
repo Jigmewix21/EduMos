@@ -14,6 +14,7 @@ import {
   View
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 import {
   createClassroom,
   createGradeColumn,
@@ -21,7 +22,9 @@ import {
   createSection,
   createTeacher,
   connectToTeacherHost,
+  deleteStudentCourse,
   enrollStudent,
+  fetchTeacherHostSnapshot,
   findUser,
   getClassroomOfflinePackage,
   importClassroomOfflinePackage,
@@ -587,6 +590,14 @@ function TeacherSignup({ onDone }) {
 
 function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, message }) {
   const [key, setKey] = useState("");
+  const [savedClassrooms, setSavedClassrooms] = useState(classrooms);
+  useEffect(() => setSavedClassrooms(classrooms), [classrooms]);
+  async function removeCourse(room) {
+    const ok = confirmDanger(`Delete "${room.name}" from this device? You can join it again later from your teacher.`);
+    if (!ok) return;
+    await deleteStudentCourse(room.id, user.id);
+    setSavedClassrooms(items => items.filter(item => item.id !== room.id));
+  }
   return (
     <View>
       <Title>Welcome {user.name}</Title>
@@ -598,7 +609,7 @@ function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, mes
         </View>
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Saved Courses</Text>
-          <Text style={styles.summaryValue}>{classrooms.length}</Text>
+          <Text style={styles.summaryValue}>{savedClassrooms.length}</Text>
           <Text style={styles.summaryMeta}>available offline</Text>
         </View>
       </View>
@@ -614,10 +625,14 @@ function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, mes
       </Card>
       <Title>My Downloaded Courses</Title>
       <View style={styles.grid}>
-        {classrooms.length ? classrooms.map(room => (
+        {savedClassrooms.length ? savedClassrooms.map(room => (
           <Pressable key={room.id} accessibilityRole="button" focusable tabIndex={0} onKeyDown={event => activateByKeyboard(event, () => onOpen(room))} style={({ hovered, focused }) => [styles.card, styles.clickableCard, (hovered || focused) && styles.clickableCardFocus]} onPress={() => onOpen(room)}>
             <Title>{room.name}</Title>
             <Text style={styles.bodyText}>Open saved resources, quizzes, and grades.</Text>
+            <View style={styles.tableActions}>
+              <Button title="Open Course" onPress={() => onOpen(room)} />
+              <Button tone="danger" title="Delete Course" onPress={() => removeCourse(room)} />
+            </View>
           </Pressable>
         )) : <Card><Title>No Courses Yet</Title><Text style={styles.bodyText}>Join a teacher group or enter a classroom key to download your first course.</Text></Card>}
       </View>
@@ -647,9 +662,15 @@ function StudentJoinPanel({ user, onConnected }) {
 
   async function connectByHost() {
     try {
-      setConnectMessage("Joining teacher course...");
+      setConnectMessage("Contacting teacher group...");
       const result = await connectToTeacherHost(hostUrl, hostClassroomId, user);
-      setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Opening course...` : result.message);
+      if (result.ok) {
+        const stats = result.stats || { sections: 0, resources: 0, quizzes: 0 };
+        const saveStatus = result.teacherSaved ? "Teacher participant list updated." : "Course saved here; teacher list will update when the teacher host is reachable.";
+        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. ${saveStatus}`);
+      } else {
+        setConnectMessage(result.message);
+      }
       if (result.ok) onConnected(result.classroom);
     } catch (error) {
       setConnectMessage(error.message);
@@ -660,7 +681,14 @@ function StudentJoinPanel({ user, onConnected }) {
     try {
       setConnectMessage("Joining course from package...");
       const result = importClassroomOfflinePackage(JSON.parse(text), user);
-      setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Opening course...` : result.message);
+      if (result.ok) {
+        const sections = JSON.parse(text).sections || [];
+        const resources = sections.reduce((total, section) => total + (section.resources || []).length, 0);
+        const quizzes = sections.reduce((total, section) => total + (section.quizzes || []).length, 0);
+        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${resources} resources and ${quizzes} quizzes. Opening course...`);
+      } else {
+        setConnectMessage(result.message);
+      }
       if (result.ok) onConnected(result.classroom);
     } catch (_error) {
       setConnectMessage("Paste the classroom package JSON from the teacher.");
@@ -781,15 +809,22 @@ function TeacherClassroom({ classroom, tab, setTab, onPendingChange }) {
 
 function TeacherHostPanel({ classroom, onPendingChange }) {
   const [packageText, setPackageText] = useState("");
-  const [localHostUrl, setLocalHostUrl] = useState("http://localhost:10000");
+  const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || "http://localhost:10000");
   const [hostMessage, setHostMessage] = useState("");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
   async function hostClassroom() {
+    setHostMessage("Preparing classroom package...");
     const payload = await getClassroomOfflinePackage(classroom.id);
     setPackageText(JSON.stringify(payload));
+    setOfflineStore(store => ({
+      ...store,
+      teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: localHostUrl }
+    }));
     try {
       await publishClassroomToTeacherHost(localHostUrl, classroom.id, payload);
-      setHostMessage(`Hosting package ready on ${localHostUrl}. Course ID: ${classroom.id}. Students can connect on the hotspot Wi-Fi using the teacher device IP.`);
+      const resources = payload.sections.reduce((total, section) => total + (section.resources || []).length, 0);
+      const quizzes = payload.sections.reduce((total, section) => total + (section.quizzes || []).length, 0);
+      setHostMessage(`Hosting package ready on ${localHostUrl}. Sharing ${resources} resources and ${quizzes} quizzes. Course ID: ${classroom.id}.`);
     } catch (_error) {
       setHostMessage(`Package ready. Start the local backend or share the package JSON. Course ID: ${classroom.id}.`);
     }
@@ -854,7 +889,16 @@ function Tabs({ tab, setTab, tabs }) {
 }
 
 async function readPickedFileDataUrl(file) {
-  if (!file?.uri || typeof FileReader === "undefined") return "";
+  if (!file?.uri) return "";
+  if (Platform.OS !== "web" && FileSystem?.readAsStringAsync) {
+    try {
+      const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
+      return `data:${file.mimeType || "application/octet-stream"};base64,${base64}`;
+    } catch (_error) {
+      return "";
+    }
+  }
+  if (typeof FileReader === "undefined") return "";
   try {
     const response = await fetch(file.uri);
     const blob = await response.blob();
@@ -1075,19 +1119,40 @@ function StudentResources({ classroom, user }) {
   const [sections, setSections] = useState([]);
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [activeResource, setActiveResource] = useState(null);
-  useEffect(() => {
-    listSections(classroom.id).then(async items => {
-      const detailed = [];
-      for (const section of items) {
-        detailed.push({
-          ...section,
-          resources: await listResources(classroom.id, section.id),
-          quizzes: (await listQuizzes(classroom.id, section.id)).filter(item => item.published)
-        });
-      }
-      setSections(detailed);
-    });
+  const [message, setMessage] = useState("");
+  const loadSections = useCallback(async () => {
+    const items = await listSections(classroom.id);
+    const detailed = [];
+    for (const section of items) {
+      detailed.push({
+        ...section,
+        resources: await listResources(classroom.id, section.id),
+        quizzes: (await listQuizzes(classroom.id, section.id)).filter(item => item.published)
+      });
+    }
+    setSections(detailed);
+    return detailed;
   }, [classroom.id]);
+  useEffect(() => {
+    loadSections();
+  }, [loadSections]);
+  async function refreshFromTeacher() {
+    if (!classroom.teacherHostUrl) {
+      setMessage("This course is already saved offline. Rejoin the teacher group to download new files.");
+      return;
+    }
+    setMessage("Checking teacher group for new resources...");
+    const payload = await fetchTeacherHostSnapshot(classroom.teacherHostUrl, classroom.id).catch(() => null);
+    if (!payload) {
+      setMessage("Could not reach teacher group. Connect to the teacher hotspot and try again.");
+      return;
+    }
+    await importClassroomOfflinePackage({ ...payload, classroom: { ...payload.classroom, teacherHostUrl: classroom.teacherHostUrl } }, null);
+    const detailed = await loadSections();
+    const resources = detailed.reduce((total, section) => total + section.resources.length, 0);
+    const quizzes = detailed.reduce((total, section) => total + section.quizzes.length, 0);
+    setMessage(`Updated from teacher group: ${resources} resources and ${quizzes} quizzes saved.`);
+  }
   useEffect(() => {
     if (!BackHandler?.addEventListener) return undefined;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -1107,6 +1172,12 @@ function StudentResources({ classroom, user }) {
   if (activeResource) return <ResourceViewer resource={activeResource} onBack={() => setActiveResource(null)} />;
   return (
     <View>
+      <Card tone="soft">
+        <Title>Course Files</Title>
+        <Text style={styles.bodyText}>Resources and quizzes saved here work offline after download.</Text>
+        <Button tone="muted" title="Refresh From Teacher" onPress={refreshFromTeacher} />
+        {!!message && <Text style={styles.noticeText}>{message}</Text>}
+      </Card>
       {sections.map(section => (
         <Card key={section.id}>
           <Title>{section.name}</Title>
@@ -1218,8 +1289,15 @@ function TakeQuiz({ classroom, quiz, user, onDone }) {
 
 function Participants({ classroom }) {
   const [participants, setParticipants] = useState([]);
+  const [message, setMessage] = useState("");
   async function refresh() {
-    setParticipants(await listParticipants(classroom.id));
+    const hostUrl = getOfflineStore().teacherHostUrls?.[classroom.id];
+    if (hostUrl) {
+      await fetchTeacherHostSnapshot(hostUrl, classroom.id).catch(() => null);
+    }
+    const nextParticipants = await listParticipants(classroom.id);
+    setParticipants(nextParticipants);
+    setMessage(hostUrl ? `Refreshed from ${hostUrl}.` : "Host this group once to refresh live hotspot joins.");
   }
   useEffect(() => { refresh(); }, [classroom.id]);
   async function removeStudent(item) {
@@ -1231,6 +1309,8 @@ function Participants({ classroom }) {
   return (
     <Card>
       <Title>Participants</Title>
+      <Button tone="muted" title="Refresh Hotspot Joins" onPress={refresh} />
+      {!!message && <Text style={styles.noticeText}>{message}</Text>}
       {participants.length ? participants.map(item => (
         <View key={item.id} style={styles.manageRow}>
           <View style={styles.manageText}>
@@ -1250,6 +1330,9 @@ function Grades({ classroom, student, editable }) {
   const [participants, setParticipants] = useState([]);
   const [newColumnName, setNewColumnName] = useState("");
   async function refresh() {
+    if (student && classroom.teacherHostUrl) {
+      await fetchTeacherHostSnapshot(classroom.teacherHostUrl, classroom.id).catch(() => null);
+    }
     const [nextGrades, nextColumns, nextParticipants] = await Promise.all([
       listGrades(classroom.id),
       listGradeColumns(classroom.id),
@@ -1340,6 +1423,7 @@ function Grades({ classroom, student, editable }) {
         </ScrollView>
       )}
       {editable && <Text>Quiz grades update automatically when students submit, and manual edits are saved offline if internet is unavailable.</Text>}
+      {!editable && classroom.teacherHostUrl && <Button tone="muted" title="Refresh Live Grades" onPress={refresh} />}
     </Card>
   );
 }

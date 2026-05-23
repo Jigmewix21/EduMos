@@ -13,7 +13,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const offlineFile = path.join(process.cwd(), "offline-hub-data.json");
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "*" }));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 async function readOfflineHub() {
   try {
