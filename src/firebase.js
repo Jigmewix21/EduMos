@@ -491,6 +491,7 @@ export async function getClassroomOfflinePackage(classroomId) {
 export function importClassroomOfflinePackage(payload, student) {
   if (!payload?.classroom?.id) return { ok: false, message: "Invalid classroom package" };
   const classroom = payload.classroom;
+  let joinedParticipant = null;
   cacheClassroom(classroom);
   (payload.sections || []).forEach(section => {
     cacheSection(classroom.id, section);
@@ -509,6 +510,7 @@ export function importClassroomOfflinePackage(payload, student) {
       email: student.email,
       joinedAt: Date.now()
     };
+    joinedParticipant = participant;
     cacheParticipant(classroom.id, participant);
     queueWrite({ action: "setParticipant", classroomId: classroom.id, participant });
   }
@@ -516,7 +518,7 @@ export function importClassroomOfflinePackage(payload, student) {
     ...store,
     connectedPackages: { ...(store.connectedPackages || {}), [classroom.id]: payload }
   }));
-  return { ok: true, classroom };
+  return { ok: true, classroom, participant: joinedParticipant };
 }
 
 export async function connectToTeacherHost(hostUrl, classroomId, student) {
@@ -531,7 +533,27 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   if (!response.ok) throw new Error("Teacher group is not reachable. Check the address and course ID.");
   const payload = await response.json();
   payload.classroom = { ...payload.classroom, teacherHostUrl: cleanUrl };
-  return importClassroomOfflinePackage(payload, student);
+  const result = importClassroomOfflinePackage(payload, student);
+  if (result.ok && result.participant) {
+    await submitParticipantToTeacherHost(cleanUrl, result.classroom.id, result.participant).catch(() => {});
+  }
+  return result;
+}
+
+export async function submitParticipantToTeacherHost(hostUrl, classroomId, participant) {
+  if (!hostUrl || !participant) return { ok: false };
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}/participants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(participant)
+    }),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not join teacher group"
+  );
+  if (!response.ok) throw new Error("Could not save student in teacher group");
+  return response.json();
 }
 
 export async function submitGradeToTeacherHost(hostUrl, classroomId, grade) {

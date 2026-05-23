@@ -641,15 +641,15 @@ function StudentJoinPanel({ user, onConnected }) {
       const packages = Object.values(hosted).filter(item => item?.classroom?.id);
       setNearbyPackages(packages);
       setScanning(false);
-      setConnectMessage(packages.length ? "Teacher groups found. Tap Download Resources." : "No local groups found yet. Connect to teacher hotspot, then use URL/Course ID or package import.");
+      setConnectMessage(packages.length ? "Teacher groups found. Tap Join Course." : "No local groups found yet. Connect to teacher hotspot, then use URL/Course ID or package import.");
     }, 900);
   }
 
   async function connectByHost() {
     try {
-      setConnectMessage("Connecting and downloading resources...");
+      setConnectMessage("Joining teacher course...");
       const result = await connectToTeacherHost(hostUrl, hostClassroomId, user);
-      setConnectMessage(result.ok ? `Downloaded ${result.classroom.name} for offline use.` : result.message);
+      setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Opening course...` : result.message);
       if (result.ok) onConnected(result.classroom);
     } catch (error) {
       setConnectMessage(error.message);
@@ -658,9 +658,9 @@ function StudentJoinPanel({ user, onConnected }) {
 
   function importPackageText(text = packageText) {
     try {
-      setConnectMessage("Importing classroom package...");
+      setConnectMessage("Joining course from package...");
       const result = importClassroomOfflinePackage(JSON.parse(text), user);
-      setConnectMessage(result.ok ? `Downloaded ${result.classroom.name} for offline use.` : result.message);
+      setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Opening course...` : result.message);
       if (result.ok) onConnected(result.classroom);
     } catch (_error) {
       setConnectMessage("Paste the classroom package JSON from the teacher.");
@@ -674,7 +674,7 @@ function StudentJoinPanel({ user, onConnected }) {
       <View style={styles.stepList}>
         <GuideStep number="1" title="Connect Wi-Fi" text="Connect your phone to the teacher hotspot." />
         <GuideStep number="2" title="Find The Group" text="Scan nearby groups or enter the URL and course ID shown by your teacher." />
-        <GuideStep number="3" title="Download Once" text="Resources save on your device and open later without internet." />
+        <GuideStep number="3" title="Join Course" text="The course opens immediately and resources stay saved for offline use." />
       </View>
       <View style={styles.joinStage}>
         <View style={[styles.radar, scanning && styles.radarActive]}>
@@ -697,7 +697,7 @@ function StudentJoinPanel({ user, onConnected }) {
             <Card key={payload.classroom.id} tone="soft">
               <Title>{payload.classroom.name}</Title>
               <Text style={styles.bodyText}>Course ID: {payload.classroom.id}</Text>
-              <Button title="Download Course" onPress={() => importPackageText(JSON.stringify(payload))} />
+              <Button title="Join Course" onPress={() => importPackageText(JSON.stringify(payload))} />
             </Card>
           ))}
         </View>
@@ -706,7 +706,7 @@ function StudentJoinPanel({ user, onConnected }) {
         <Text style={styles.howTitle}>Manual Join</Text>
         <Input value={hostUrl} onChangeText={setHostUrl} placeholder="Teacher address, example http://192.168.43.1:10000" />
         <Input value={hostClassroomId} onChangeText={setHostClassroomId} placeholder="Course ID shown by teacher" onSubmitEditing={connectByHost} />
-        <Button title="Join And Download Course" onPress={connectByHost} />
+        <Button title="Join Course" onPress={connectByHost} />
       </View>
       <View style={styles.manualJoin}>
         <Text style={styles.howTitle}>No Hotspot Server?</Text>

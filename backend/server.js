@@ -19,7 +19,7 @@ async function readOfflineHub() {
   try {
     return JSON.parse(await fs.readFile(offlineFile, "utf8"));
   } catch (_error) {
-    return { classrooms: {}, grades: {}, gradeColumns: {} };
+    return { classrooms: {}, participants: {}, grades: {}, gradeColumns: {} };
   }
 }
 
@@ -78,8 +78,12 @@ app.post("/api/offline/classrooms/:classroomId", async (req, res) => {
 
   const hub = await readOfflineHub();
   hub.classrooms[classroomId] = payload;
+  hub.participants[classroomId] = hub.participants[classroomId] || {};
   hub.grades[classroomId] = hub.grades[classroomId] || {};
   hub.gradeColumns[classroomId] = hub.gradeColumns[classroomId] || {};
+  for (const participant of payload.participants || []) {
+    hub.participants[classroomId][participant.studentId || participant.id] = participant;
+  }
   for (const column of payload.gradeColumns || []) {
     hub.gradeColumns[classroomId][column.id] = column;
   }
@@ -100,9 +104,33 @@ app.get("/api/offline/classrooms/:classroomId", async (req, res) => {
 
   res.json({
     ...payload,
+    participants: Object.values(hub.participants[classroomId] || payload.participants || {}),
     gradeColumns: Object.values(hub.gradeColumns[classroomId] || payload.gradeColumns || {}),
     grades: Object.values(hub.grades[classroomId] || payload.grades || {})
   });
+});
+
+app.post("/api/offline/classrooms/:classroomId/participants", async (req, res) => {
+  const { classroomId } = req.params;
+  const participant = req.body;
+
+  if (!participant?.studentId || !participant?.name) {
+    res.status(400).json({ ok: false, message: "studentId and name are required" });
+    return;
+  }
+
+  const hub = await readOfflineHub();
+  hub.participants[classroomId] = hub.participants[classroomId] || {};
+  hub.participants[classroomId][participant.studentId] = {
+    ...participant,
+    id: participant.id || participant.studentId,
+    classroomId,
+    joinedAt: participant.joinedAt || Date.now(),
+    receivedAt: Date.now()
+  };
+  await writeOfflineHub(hub);
+
+  res.json({ ok: true, id: participant.studentId });
 });
 
 app.post("/api/offline/classrooms/:classroomId/grades", async (req, res) => {
@@ -138,6 +166,17 @@ app.post("/api/offline/sync", async (_req, res) => {
   const db = admin.firestore();
   let syncedGrades = 0;
   let syncedColumns = 0;
+  let syncedParticipants = 0;
+
+  for (const [classroomId, participants] of Object.entries(hub.participants || {})) {
+    for (const [studentId, participant] of Object.entries(participants)) {
+      await db.collection("classrooms").doc(classroomId).collection("participants").doc(studentId).set({
+        ...participant,
+        syncedAt: Date.now()
+      });
+      syncedParticipants += 1;
+    }
+  }
 
   for (const [classroomId, columns] of Object.entries(hub.gradeColumns || {})) {
     for (const [columnId, column] of Object.entries(columns)) {
@@ -159,7 +198,7 @@ app.post("/api/offline/sync", async (_req, res) => {
     }
   }
 
-  res.json({ ok: true, syncedColumns, syncedGrades });
+  res.json({ ok: true, syncedParticipants, syncedColumns, syncedGrades });
 });
 
 app.post("/api/upload", upload.single("file"), async (req, res) => {
