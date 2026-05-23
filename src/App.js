@@ -54,7 +54,7 @@ const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
 const DEFAULT_TEACHER = { email: "teacher@edumos.com", password: "teacher123" };
 const SCREEN_ROUTES = new Set(["home", "about", "login", "signup", "studentSetup", "studentDashboard", "studentClassroom", "teacherDashboard", "teacherClassroom"]);
 const userKey = (role, email) => `${role}__${email.trim().toLowerCase()}`;
-const logoImage = require("../assets/edumos-logo.jpeg");
+const logoImage = require("../assets/edumos-logo.png");
 
 function canUseBrowserHistory() {
   return Platform.OS === "web" && typeof window !== "undefined" && !!window.history && !!window.location?.href;
@@ -305,6 +305,9 @@ export default function App() {
             setMessage(`Connected offline to ${room.name}`);
             await refreshClassrooms();
             setPendingWrites(getPendingWriteCount());
+            setActiveClassroom(room);
+            setTab("resources");
+            navigate("studentClassroom");
           }}
           onOpen={room => {
             setActiveClassroom(room);

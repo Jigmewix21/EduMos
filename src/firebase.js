@@ -36,6 +36,14 @@ if (typeof globalThis !== "undefined" && typeof window !== "undefined" && typeof
 const keyOf = (...parts) => parts.join("__");
 const localId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const FIREBASE_TIMEOUT_MS = 10000;
+const LOCAL_HOST_TIMEOUT_MS = 12000;
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ]);
+}
 
 function cacheUser(role, user) {
   if (user?.email) setCollectionItem("users", keyOf(role, user.email.trim().toLowerCase()), user);
@@ -72,10 +80,7 @@ function cacheGradeColumn(classroomId, column) {
 async function tryFirestore(operation, fallback) {
   if (!isOnline()) return fallback();
   try {
-    return await Promise.race([
-      operation(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
-    ]);
+    return await withTimeout(operation(), FIREBASE_TIMEOUT_MS, "Firebase request timed out");
   } catch (_error) {
     return fallback();
   }
@@ -106,16 +111,14 @@ export async function createTeacher(name, email, password) {
   if (!isOnline()) return { ok: false, message: "Teacher account creation needs internet once. Existing cached accounts can login offline." };
   const cleanEmail = email.trim().toLowerCase();
   try {
-    const existing = await Promise.race([
+    const existing = await withTimeout(
       getDocs(query(collection(db, "teachers"), where("email", "==", cleanEmail), limit(1))),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
-    ]);
+      FIREBASE_TIMEOUT_MS,
+      "Firebase request timed out"
+    );
     if (!existing.empty) return { ok: false, message: "Teacher already exists" };
     const data = { name, email: cleanEmail, password, createdAt: Date.now() };
-    const ref = await Promise.race([
-      addDoc(collection(db, "teachers"), data),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
-    ]);
+    const ref = await withTimeout(addDoc(collection(db, "teachers"), data), FIREBASE_TIMEOUT_MS, "Firebase request timed out");
     const teacher = { id: ref.id, ...data };
     cacheUser("teacher", teacher);
     return { ok: true, teacher };
@@ -517,9 +520,15 @@ export function importClassroomOfflinePackage(payload, student) {
 }
 
 export async function connectToTeacherHost(hostUrl, classroomId, student) {
-  const cleanUrl = hostUrl.trim().replace(/\/$/, "");
-  const response = await fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`);
-  if (!response.ok) throw new Error("Teacher host is not reachable");
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const cleanClassroomId = classroomId.trim();
+  if (!cleanUrl || !cleanClassroomId) throw new Error("Enter teacher address and course ID.");
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${cleanClassroomId}`),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not reach teacher group. Check that both phones are on the same hotspot and the teacher pressed Host Group."
+  );
+  if (!response.ok) throw new Error("Teacher group is not reachable. Check the address and course ID.");
   const payload = await response.json();
   payload.classroom = { ...payload.classroom, teacherHostUrl: cleanUrl };
   return importClassroomOfflinePackage(payload, student);
@@ -527,25 +536,39 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
 
 export async function submitGradeToTeacherHost(hostUrl, classroomId, grade) {
   if (!hostUrl) return { ok: false };
-  const cleanUrl = hostUrl.trim().replace(/\/$/, "");
-  const response = await fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}/grades`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(grade)
-  });
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}/grades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(grade)
+    }),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not send grade to teacher host"
+  );
   if (!response.ok) throw new Error("Could not send grade to teacher host");
   return response.json();
 }
 
 export async function publishClassroomToTeacherHost(hostUrl, classroomId, payload) {
-  const cleanUrl = hostUrl.trim().replace(/\/$/, "");
-  const response = await fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not publish classroom to local teacher host"
+  );
   if (!response.ok) throw new Error("Could not publish classroom to local teacher host");
   return response.json();
+}
+
+function normalizeHostUrl(hostUrl) {
+  const value = hostUrl.trim().replace(/\/$/, "");
+  if (!value) return "";
+  return /^https?:\/\//i.test(value) ? value : `http://${value}`;
 }
 
 async function applyPendingWrite(write) {
