@@ -94,6 +94,7 @@ export default function App() {
   const [tab, setTab] = useState("resources");
   const [online, setOnline] = useState(isOnline());
   const [pendingWrites, setPendingWrites] = useState(getPendingWriteCount());
+  const [authBusy, setAuthBusy] = useState(false);
 
   const navigate = useCallback((nextScreen, options = {}) => {
     if (!SCREEN_ROUTES.has(nextScreen)) return;
@@ -178,9 +179,19 @@ export default function App() {
   }, []);
 
   async function login(nextRole = role) {
+    if (authBusy) return;
+    if (!email.trim() || !password.trim()) {
+      setMessage("Enter email and password first.");
+      return;
+    }
+    setAuthBusy(true);
+    setMessage("Signing in...");
     const found = await findUser(nextRole, email, password);
+    setAuthBusy(false);
     if (!found) {
-      setMessage(`Invalid ${nextRole} login. Seed users in Firebase first.`);
+      setMessage(nextRole === "teacher"
+        ? "Login failed. Check internet for first login, or use a teacher account already saved on this device."
+        : "Login failed. Check your email and password.");
       return;
     }
     setUser(found);
@@ -264,12 +275,22 @@ export default function App() {
         >
           <Input value={email} onChangeText={setEmail} placeholder="Email" onSubmitEditing={() => login(role)} keyboardType="email-address" autoCapitalize="none" />
           <Input value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry onSubmitEditing={() => login(role)} />
-          <Button title="Login" onPress={() => login(role)} />
+          <Button title={authBusy ? "Signing In..." : "Login"} onPress={() => login(role)} />
           {role === "teacher" && <Button tone="muted" title="Create Teacher Account" onPress={() => navigate("signup")} />}
+          {role === "teacher" && <Text style={styles.bodyText}>Teacher first login needs internet once. After that, EduMos opens your dashboard offline.</Text>}
           {!!message && <Text style={styles.error}>{message}</Text>}
         </AuthShell>
       )}
-      {screen === "signup" && <TeacherSignup onDone={() => navigate("login")} />}
+      {screen === "signup" && <TeacherSignup onDone={teacher => {
+        if (teacher) {
+          setUser(teacher);
+          setRole("teacher");
+          setOfflineStore(store => ({ ...store, activeSession: { role: "teacher", user: teacher, savedAt: Date.now() } }));
+          navigate("teacherDashboard");
+          return;
+        }
+        navigate("login");
+      }} />}
       {screen === "studentDashboard" && (
         <StudentDashboard
           user={user}
@@ -536,20 +557,26 @@ function TeacherSignup({ onDone }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    if (busy) return;
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      setMessage("Enter name, email, and password first.");
+      return;
+    }
+    setBusy(true);
+    setMessage("Creating account...");
+    const result = await createTeacher(name, email, password);
+    setBusy(false);
+    setMessage(result.ok ? "Account created" : result.message);
+    if (result.ok) onDone(result.teacher);
+  }
   return (
     <AuthShell title="Teacher Sign Up" subtitle="Create a teacher account once online, then continue preparing classrooms offline.">
       <Input value={name} onChangeText={setName} placeholder="Full Name" />
       <Input value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" autoCapitalize="none" />
-      <Input value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry onSubmitEditing={async () => {
-        const result = await createTeacher(name, email, password);
-        setMessage(result.ok ? "Account created" : result.message);
-        if (result.ok) onDone();
-      }} />
-      <Button title="Create Account" onPress={async () => {
-        const result = await createTeacher(name, email, password);
-        setMessage(result.ok ? "Account created" : result.message);
-        if (result.ok) onDone();
-      }} />
+      <Input value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry onSubmitEditing={submit} />
+      <Button title={busy ? "Creating..." : "Create Account"} onPress={submit} />
       {!!message && <Text style={styles.error}>{message}</Text>}
     </AuthShell>
   );

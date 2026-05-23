@@ -35,6 +35,7 @@ if (typeof globalThis !== "undefined" && typeof window !== "undefined" && typeof
 
 const keyOf = (...parts) => parts.join("__");
 const localId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+const FIREBASE_TIMEOUT_MS = 10000;
 
 function cacheUser(role, user) {
   if (user?.email) setCollectionItem("users", keyOf(role, user.email.trim().toLowerCase()), user);
@@ -71,7 +72,10 @@ function cacheGradeColumn(classroomId, column) {
 async function tryFirestore(operation, fallback) {
   if (!isOnline()) return fallback();
   try {
-    return await operation();
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
+    ]);
   } catch (_error) {
     return fallback();
   }
@@ -100,17 +104,24 @@ export async function findUser(role, email, password) {
 
 export async function createTeacher(name, email, password) {
   if (!isOnline()) return { ok: false, message: "Teacher account creation needs internet once. Existing cached accounts can login offline." };
-  const existing = await getDocs(
-    query(collection(db, "teachers"), where("email", "==", email.trim().toLowerCase()), limit(1))
-  );
-  if (!existing.empty) return { ok: false, message: "Teacher already exists" };
-  const ref = await addDoc(collection(db, "teachers"), {
-    name,
-    email: email.trim().toLowerCase(),
-    password,
-    createdAt: Date.now()
-  });
-  return { ok: true, teacher: { id: ref.id, name, email } };
+  const cleanEmail = email.trim().toLowerCase();
+  try {
+    const existing = await Promise.race([
+      getDocs(query(collection(db, "teachers"), where("email", "==", cleanEmail), limit(1))),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
+    ]);
+    if (!existing.empty) return { ok: false, message: "Teacher already exists" };
+    const data = { name, email: cleanEmail, password, createdAt: Date.now() };
+    const ref = await Promise.race([
+      addDoc(collection(db, "teachers"), data),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase request timed out")), FIREBASE_TIMEOUT_MS))
+    ]);
+    const teacher = { id: ref.id, ...data };
+    cacheUser("teacher", teacher);
+    return { ok: true, teacher };
+  } catch (_error) {
+    return { ok: false, message: "Could not create account. Check internet and try again." };
+  }
 }
 
 export async function createClassroom(teacherId, name, key) {

@@ -2,22 +2,25 @@
   "expo": {
     "name": "EduMos",
     "slug": "edumos-web2",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
+    "icon": "./assets/edumos-icon.png",
     "platforms": [
       "web",
       "ios",
       "android"
     ],
     "splash": {
+      "image": "./assets/edumos-splash.png",
       "backgroundColor": "#f8fafc",
       "resizeMode": "contain"
     },
     "android": {
       "package": "com.edumos.offlinelearning",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
-        "backgroundColor": "#2563eb"
+        "foregroundImage": "./assets/edumos-icon.png",
+        "backgroundColor": "#ffffff"
       }
     },
     "ios": {
