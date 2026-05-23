@@ -191,17 +191,18 @@ function Home({ setScreen, setRole, setEmail, setPassword }) {
   return (
     <View>
       <View style={styles.hero}>
-        <Text style={styles.heroTitle}>Offline Learning Platform For Every Classroom</Text>
-        <Text style={styles.heroText}>EduMos helps teachers distribute educational resources through Wi-Fi hotspot and local network while students keep learning without internet.</Text>
+        <Text style={styles.heroTitle}>EduMos</Text>
+        <Text style={styles.heroSubtitle}>Offline learning platform for every classroom</Text>
+        <Text style={styles.heroText}>Teachers can publish lessons, host a local classroom over hotspot, collect quiz work offline, and sync everything back to the website when internet returns.</Text>
         <View style={styles.loginSelection}>
           <Card tone="glass">
-            <Text style={styles.loginIcon}>🎓</Text>
+            <Text style={styles.loginIcon}>ST</Text>
             <Title light>Student Portal</Title>
             <Text style={styles.lightText}>Join classrooms, access resources, complete quizzes, and view grades online or offline.</Text>
             <Button tone="light" title="Student Login" onPress={() => openLogin("student")} />
           </Card>
           <Card tone="glass">
-            <Text style={styles.loginIcon}>👨‍🏫</Text>
+            <Text style={styles.loginIcon}>TC</Text>
             <Title light>Teacher Portal</Title>
             <Text style={styles.lightText}>Create classrooms, host hotspot learning, manage students, quizzes, resources, and grades.</Text>
             <Button tone="outline" title="Teacher Login" onPress={() => openLogin("teacher")} />
@@ -210,10 +211,10 @@ function Home({ setScreen, setRole, setEmail, setPassword }) {
       </View>
       <Title>Features</Title>
       <View style={styles.grid}>
-        <Feature icon="📶" title="Offline Access" text="Students can open downloaded course resources and quizzes without internet." />
-        <Feature icon="📡" title="Hotspot Sharing" text="Teachers host course packages locally so students connect on Wi-Fi or hotspot." />
-        <Feature icon="📊" title="Smart Sync" text="Quiz submissions and gradebook data wait offline, then sync when internet returns." />
-        <Feature icon="📱" title="Web And APK" text="The same Expo app works as a Vercel website and Android build for teachers and students." />
+        <Feature icon="LAN" title="Offline Access" text="Students can open downloaded course resources and quizzes without internet." />
+        <Feature icon="HOST" title="Hotspot Sharing" text="Teachers host course packages locally so students connect on Wi-Fi or hotspot." />
+        <Feature icon="SYNC" title="Smart Sync" text="Quiz submissions and gradebook data wait offline, then sync when internet returns." />
+        <Feature icon="APK" title="Web And APK" text="The same Expo app works as a Vercel website and Android build for teachers and students." />
       </View>
       <OfflineSection />
     </View>
@@ -246,9 +247,9 @@ function About() {
       <Text>To make digital education accessible, affordable, and reliable for students in remote and low-connectivity areas.</Text>
     </Card>
     <View style={styles.grid}>
-      <Feature icon="🔑" title="Classroom Keys" text="Students join the correct teacher course with a simple enrollment key." />
-      <Feature icon="🧪" title="Interactive Quizzes" text="Teachers publish timed quizzes and students can submit them offline." />
-      <Feature icon="📚" title="Resource Library" text="Sections keep notes, PDFs, images, audio, and videos organized by lesson." />
+      <Feature icon="KEY" title="Classroom Keys" text="Students join the correct teacher course with a simple enrollment key." />
+      <Feature icon="QUIZ" title="Interactive Quizzes" text="Teachers publish timed quizzes and students can submit them offline." />
+      <Feature icon="LIB" title="Resource Library" text="Sections keep notes, PDFs, images, audio, and videos organized by lesson." />
     </View>
     </View>
   );
@@ -815,31 +816,32 @@ function Button({ title, onPress, tone = "primary" }) {
 }
 
 const styles = StyleSheet.create({
-  page: { backgroundColor: "#f8fafc" },
-  content: { padding: 24, gap: 22 },
-  nav: { backgroundColor: "#0f172a", borderRadius: 18, padding: 18, flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 },
-  logo: { color: "#38bdf8", fontSize: 30, fontWeight: "800" },
+  page: { backgroundColor: "#eef2f6" },
+  content: { padding: 20, gap: 22, width: "100%", maxWidth: 1180, alignSelf: "center" },
+  nav: { backgroundColor: "#0f172a", borderRadius: 10, padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, boxShadow: "0 10px 28px rgba(15,23,42,0.18)" },
+  logo: { color: "#38bdf8", fontSize: 28, fontWeight: "900" },
   navLinks: { flexDirection: "row", gap: 18, flexWrap: "wrap" },
   navLink: { color: "white", fontWeight: "700" },
   statusPill: { color: "#dbeafe", fontWeight: "800" },
-  hero: { backgroundColor: "#2563eb", borderRadius: 28, padding: 36, gap: 32, boxShadow: "0 20px 50px rgba(0,0,0,0.15)" },
-  heroTitle: { color: "white", fontSize: 42, fontWeight: "900", marginBottom: 12, textAlign: "center" },
-  heroText: { color: "#dbeafe", fontSize: 18, lineHeight: 28 },
+  hero: { backgroundColor: "#123a5f", borderRadius: 12, padding: 36, gap: 28, boxShadow: "0 22px 55px rgba(15,23,42,0.22)" },
+  heroTitle: { color: "white", fontSize: 54, fontWeight: "900", textAlign: "center" },
+  heroSubtitle: { color: "#67e8f9", fontSize: 23, fontWeight: "800", textAlign: "center" },
+  heroText: { color: "#dbeafe", fontSize: 18, lineHeight: 28, textAlign: "center", maxWidth: 860, alignSelf: "center" },
   loginSelection: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
-  glassCard: { backgroundColor: "rgba(255,255,255,0.12)", borderColor: "rgba(255,255,255,0.22)" },
-  loginIcon: { fontSize: 42 },
-  featureIcon: { fontSize: 42 },
+  glassCard: { backgroundColor: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.24)" },
+  loginIcon: { color: "#0f172a", backgroundColor: "#e0f2fe", width: 54, height: 54, borderRadius: 8, textAlign: "center", lineHeight: 54, fontWeight: "900" },
+  featureIcon: { color: "#0f172a", backgroundColor: "#e0f2fe", alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, fontWeight: "900", overflow: "hidden" },
   lightText: { color: "#e2e8f0", lineHeight: 24 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
   grid4: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
-  card: { backgroundColor: "white", borderColor: "#e2e8f0", borderWidth: 1, borderRadius: 18, padding: 22, gap: 12, flexGrow: 1, flexBasis: 260, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" },
-  title: { color: "#2563eb", fontSize: 25, fontWeight: "800" },
+  card: { backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 22, gap: 12, flexGrow: 1, flexBasis: 260, boxShadow: "0 8px 22px rgba(15,23,42,0.07)" },
+  title: { color: "#155e75", fontSize: 24, fontWeight: "900" },
   lightTitle: { color: "white" },
   heading: { color: "#0f172a", fontSize: 18, fontWeight: "800", marginTop: 10 },
-  input: { borderColor: "#cbd5e1", borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 16, backgroundColor: "white" },
-  button: { backgroundColor: "#2563eb", borderRadius: 12, padding: 14, alignItems: "center", marginTop: 4 },
-  buttonMuted: { backgroundColor: "#64748b" },
-  buttonDanger: { backgroundColor: "#ef4444" },
+  input: { borderColor: "#cbd5e1", borderWidth: 1, borderRadius: 8, padding: 14, fontSize: 16, backgroundColor: "white" },
+  button: { backgroundColor: "#155e75", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 4 },
+  buttonMuted: { backgroundColor: "#475569" },
+  buttonDanger: { backgroundColor: "#dc2626" },
   buttonLight: { backgroundColor: "white" },
   buttonOutline: { backgroundColor: "transparent", borderColor: "white", borderWidth: 2 },
   buttonText: { color: "white", fontWeight: "800" },
@@ -847,9 +849,9 @@ const styles = StyleSheet.create({
   error: { color: "#ef4444", fontWeight: "700" },
   tabs: { flexDirection: "row", gap: 10, flexWrap: "wrap", marginVertical: 12 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
-  progressCard: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0", borderWidth: 1, borderRadius: 18, padding: 18, gap: 8 },
+  progressCard: { backgroundColor: "#f8fafc", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 8 },
   sectionTools: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
-  tableWrap: { backgroundColor: "white", borderRadius: 18, borderColor: "#e2e8f0", borderWidth: 1 },
+  tableWrap: { backgroundColor: "white", borderRadius: 8, borderColor: "#d8e0ea", borderWidth: 1 },
   tableRow: { flexDirection: "row", alignItems: "stretch" },
   tableCell: { width: 190, minHeight: 58, padding: 12, borderBottomColor: "#e2e8f0", borderBottomWidth: 1, borderRightColor: "#e2e8f0", borderRightWidth: 1, justifyContent: "center" },
   tableHeader: { backgroundColor: "#f8fafc" },
