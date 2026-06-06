@@ -35,7 +35,7 @@ class EduMosLanServerModule : Module() {
         port = requestedPort
         packageJson = mergeSavedStudentChanges(JSONObject(payload))
         persistPackage()
-        serverSocket = ServerSocket(port)
+        serverSocket = ServerSocket(port, 150)
         running.set(true)
         serverThread = thread(start = true, name = "EduMosLanServer") {
           acceptLoop()
@@ -191,6 +191,7 @@ class EduMosLanServerModule : Module() {
             .put("classroomId", classroomId)
             .put("studentId", studentId)
             .put("studentName", answer.optString("studentName"))
+            .put("studentEmail", answer.optString("studentEmail"))
             .put("columnName", question.optString("title", "Live Quiz"))
             .put("value", score)
             .put("updatedAt", System.currentTimeMillis()))

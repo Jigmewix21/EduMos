@@ -92,6 +92,24 @@ function mergeById(remoteItems, localItems) {
   return Array.from(merged.values());
 }
 
+function normalizeIdentity(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function resolveStudentForGrade(grade, participants) {
+  const byEmail = normalizeIdentity(grade.studentEmail || grade.email);
+  if (byEmail) {
+    const match = participants.find(item => normalizeIdentity(item.email) === byEmail);
+    if (match) return match.studentId || match.id;
+  }
+  const byName = normalizeIdentity(grade.studentName || grade.name);
+  if (byName) {
+    const match = participants.find(item => normalizeIdentity(item.name) === byName);
+    if (match) return match.studentId || match.id;
+  }
+  return grade.studentId;
+}
+
 async function tryFirestore(operation, fallback) {
   if (!isOnline()) return fallback();
   try {
@@ -646,7 +664,8 @@ export async function fetchTeacherHostSnapshot(hostUrl, classroomId, options = {
     (section.resources || []).forEach(resource => cacheResource(classroomId, section.id, resource));
     (section.quizzes || []).forEach(quiz => cacheQuiz(classroomId, section.id, quiz));
   });
-  (payload.participants || []).forEach(participant => {
+  const participants = payload.participants || [];
+  participants.forEach(participant => {
     const studentId = participant.studentId || participant.id;
     cacheParticipant(classroomId, participant);
     if (options.queueForSync && studentId) {
@@ -660,13 +679,15 @@ export async function fetchTeacherHostSnapshot(hostUrl, classroomId, options = {
   });
   (payload.gradeColumns || []).forEach(column => cacheGradeColumn(classroomId, column));
   (payload.grades || []).forEach(grade => {
-    cacheGrade(classroomId, grade);
+    const matchedStudentId = resolveStudentForGrade(grade, participants);
+    const matchedGrade = matchedStudentId ? { ...grade, studentId: matchedStudentId } : grade;
+    cacheGrade(classroomId, matchedGrade);
     if (options.queueForSync && grade.id) {
       queueWrite({
         localId: `teacherHost_${classroomId}_grade_${grade.id}`,
         action: "setGrade",
         classroomId,
-        grade: { ...grade, classroomId }
+        grade: { ...matchedGrade, classroomId }
       });
     }
   });

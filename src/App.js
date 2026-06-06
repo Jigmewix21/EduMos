@@ -748,10 +748,10 @@ function StudentJoinPanel({ user, onConnected }) {
   return (
     <Card>
       <Title>Join Teacher Group</Title>
-      <Text style={styles.bodyText}>Follow these steps to receive lessons from your teacher, even without internet.</Text>
+      <Text style={styles.bodyText}>Join your teacher without internet. Scan for Wi-Fi Direct, or enter the teacher URL when your class is using a large offline Wi-Fi network.</Text>
       <View style={styles.stepList}>
-        <GuideStep number="1" title="Connect Wi-Fi" text="Connect your phone to the teacher hotspot." />
-        <GuideStep number="2" title="Find The Group" text="Scan nearby groups or enter the URL and course ID shown by your teacher." />
+        <GuideStep number="1" title="Open Wi-Fi" text="Turn on Wi-Fi. For large classes, connect to the classroom router." />
+        <GuideStep number="2" title="Find The Group" text="Scan nearby Wi-Fi Direct teachers or enter the URL shown by your teacher." />
         <GuideStep number="3" title="Join Course" text="The course opens immediately and resources stay saved for offline use." />
       </View>
       <View style={styles.joinStage}>
@@ -896,6 +896,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   const [packageText, setPackageText] = useState("");
   const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || "http://192.168.43.1:10000");
   const [hostMessage, setHostMessage] = useState("");
+  const [queueCount, setQueueCount] = useState(getPendingWriteCount());
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
   async function hostClassroom() {
     setHostMessage("Preparing classroom package...");
@@ -922,6 +923,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
           }));
           setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
+          setQueueCount(getPendingWriteCount());
           onPendingChange?.();
           return;
         }
@@ -953,14 +955,27 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   }
   async function sync() {
     const result = await syncPendingWrites();
+    setQueueCount(result.pending);
     setHostMessage(result.pending ? `${result.pending} records still waiting for internet.` : "All offline classroom data is synced.");
     onPendingChange?.();
   }
   return (
       <Card>
       <Title>Create Teacher Group</Title>
-      <Text style={styles.bodyText}>Share this classroom over hotspot so students can download your lessons and keep them offline.</Text>
-      {Platform.OS !== "android" && <Text style={styles.noticeText}>True phone-to-phone hotspot hosting works in the Android APK. Web preview can prepare packages, but cannot start a phone server.</Text>}
+      <Text style={styles.bodyText}>Share this classroom without internet. Use Wi-Fi Direct for small groups, or Large Class LAN when many students are connected to the same offline router/Wi-Fi.</Text>
+      {Platform.OS !== "android" && <Text style={styles.noticeText}>Wi-Fi Direct hosting works in the Android APK. Web preview can prepare packages, but cannot start the phone-to-phone server.</Text>}
+      <View style={styles.modeGrid}>
+        <View style={styles.modeCard}>
+          <Text style={styles.modeTitle}>Wi-Fi Direct</Text>
+          <Text style={styles.bodyText}>No password. Best for small groups because phone hardware limits P2P clients.</Text>
+          <Text style={styles.modeMeta}>Recommended: 5-8 students</Text>
+        </View>
+        <View style={styles.modeCard}>
+          <Text style={styles.modeTitle}>Large Class LAN</Text>
+          <Text style={styles.bodyText}>Use an offline classroom router or shared Wi-Fi. Students still need no internet.</Text>
+          <Text style={styles.modeMeta}>Designed for up to 100 students</Text>
+        </View>
+      </View>
       <View style={styles.stepList}>
         <GuideStep number="1" title="Turn On Hotspot" text="Open hotspot settings and let students connect to your Wi-Fi." />
         <GuideStep number="2" title="Start Group" text="Press Host Group to prepare resources for students." />
@@ -971,6 +986,10 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
         <Text style={styles.shareCode}>{localHostUrl || defaultHost}</Text>
         <Text style={styles.howTitle}>Course ID</Text>
         <Text style={styles.shareCode}>{classroom.id}</Text>
+      </View>
+      <View style={styles.syncQueueBox}>
+        <Text style={styles.modeTitle}>Sync Queue</Text>
+        <Text style={styles.bodyText}>{queueCount} local records are waiting to upload when internet returns.</Text>
       </View>
       <Input value={localHostUrl} onChangeText={setLocalHostUrl} placeholder="Local backend URL on teacher device" />
       <View style={styles.tabs}>
@@ -1423,6 +1442,7 @@ function StudentLiveQuiz({ classroom, user }) {
       questionTitle: question.title,
       studentId: user.id,
       studentName: user.name,
+      studentEmail: user.email,
       answerIndex: selectedIndex,
       submittedAt: Date.now()
     });
@@ -1514,6 +1534,7 @@ function TakeQuiz({ classroom, quiz, user, onDone }) {
         id: `${user.id}_${quiz.title}`,
         studentId: user.id,
         studentName: user.name,
+        studentEmail: user.email,
         columnName: quiz.title,
         value,
         updatedAt: Date.now()
@@ -1816,6 +1837,11 @@ const styles = StyleSheet.create({
   radarRingSmall: { position: "absolute", width: 62, height: 62, borderRadius: 31, borderColor: "#2ecc71", borderWidth: 2, opacity: 0.45 },
   radarDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#4b5cff" },
   hostShareBox: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 8 },
+  modeGrid: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
+  modeCard: { flexGrow: 1, flexBasis: 260, backgroundColor: "#ffffff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 16, gap: 8 },
+  modeTitle: { color: "#123a5f", fontSize: 18, fontWeight: "900" },
+  modeMeta: { color: "#155e75", backgroundColor: "#e0f7fa", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 10, fontWeight: "900", alignSelf: "flex-start", overflow: "hidden" },
+  syncQueueBox: { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", borderWidth: 1, borderRadius: 8, padding: 16, gap: 6 },
   shareCode: { color: "#111827", backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 12, fontWeight: "900", overflow: "hidden" },
   manualJoin: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 16, gap: 10 },
   noticeText: { color: "#155e75", backgroundColor: "#e0f7fa", borderRadius: 8, padding: 12, fontWeight: "800", overflow: "hidden" },
