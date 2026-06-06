@@ -740,6 +740,58 @@ export async function publishClassroomToTeacherHost(hostUrl, classroomId, payloa
   return response.json();
 }
 
+export async function publishLiveQuestionToTeacherHost(hostUrl, classroomId, question) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/live/classrooms/${classroomId}/question`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(question)
+    }),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not publish live question"
+  );
+  if (!response.ok) throw new Error("Could not publish live question");
+  return response.json();
+}
+
+export async function fetchLiveQuestionFromTeacherHost(hostUrl, classroomId) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/live/classrooms/${classroomId}/question`),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not fetch live question"
+  );
+  if (!response.ok) throw new Error("Could not fetch live question");
+  return response.json();
+}
+
+export async function submitLiveAnswerToTeacherHost(hostUrl, classroomId, answer) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/live/classrooms/${classroomId}/answers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(answer)
+    }),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not submit live answer"
+  );
+  if (!response.ok) throw new Error("Could not submit live answer");
+  return response.json();
+}
+
+export async function fetchLiveAnswersFromTeacherHost(hostUrl, classroomId) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  const response = await withTimeout(
+    fetch(`${cleanUrl}/api/live/classrooms/${classroomId}/answers`),
+    LOCAL_HOST_TIMEOUT_MS,
+    "Could not fetch live answers"
+  );
+  if (!response.ok) throw new Error("Could not fetch live answers");
+  return response.json();
+}
+
 function normalizeHostUrl(hostUrl) {
   const value = hostUrl.trim().replace(/\/$/, "");
   if (!value) return "";

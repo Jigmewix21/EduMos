@@ -160,6 +160,48 @@ class EduMosLanServerModule : Module() {
         persistPackage()
         writeJson(output, 200, JSONObject().put("ok", true).put("id", id))
       }
+      method == "POST" && path == "/api/live/classrooms/$classroomId/question" -> {
+        val question = JSONObject(body)
+        question.put("classroomId", classroomId)
+        question.put("publishedAt", System.currentTimeMillis())
+        packageJson.put("liveQuestion", question)
+        packageJson.put("liveAnswers", JSONArray())
+        persistPackage()
+        writeJson(output, 200, JSONObject().put("ok", true).put("question", question))
+      }
+      method == "GET" && path == "/api/live/classrooms/$classroomId/question" -> {
+        val question = packageJson.optJSONObject("liveQuestion")
+        writeJson(output, 200, JSONObject().put("ok", true).put("question", question ?: JSONObject.NULL))
+      }
+      method == "POST" && path == "/api/live/classrooms/$classroomId/answers" -> {
+        val answer = JSONObject(body)
+        val answers = packageJson.optJSONArray("liveAnswers") ?: JSONArray()
+        val studentId = answer.optString("studentId")
+        removeById(answers, studentId)
+        answers.put(answer.put("id", studentId).put("classroomId", classroomId).put("receivedAt", System.currentTimeMillis()))
+        packageJson.put("liveAnswers", answers)
+        val question = packageJson.optJSONObject("liveQuestion")
+        if (question != null) {
+          val grades = packageJson.optJSONArray("grades") ?: JSONArray()
+          val score = if (answer.optInt("answerIndex", -1) == question.optInt("correctIndex", -2)) "1/1" else "0/1"
+          val gradeId = "${studentId}_${question.optString("id", "live")}"
+          removeById(grades, gradeId)
+          grades.put(JSONObject()
+            .put("id", gradeId)
+            .put("classroomId", classroomId)
+            .put("studentId", studentId)
+            .put("studentName", answer.optString("studentName"))
+            .put("columnName", question.optString("title", "Live Quiz"))
+            .put("value", score)
+            .put("updatedAt", System.currentTimeMillis()))
+          packageJson.put("grades", grades)
+        }
+        persistPackage()
+        writeJson(output, 200, JSONObject().put("ok", true).put("answer", answer))
+      }
+      method == "GET" && path == "/api/live/classrooms/$classroomId/answers" -> {
+        writeJson(output, 200, JSONObject().put("ok", true).put("answers", packageJson.optJSONArray("liveAnswers") ?: JSONArray()))
+      }
       else -> {
         writeJson(output, 404, JSONObject().put("ok", false).put("message", "Not found"))
       }

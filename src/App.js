@@ -41,11 +41,15 @@ import {
   listSections,
   listStudentClassrooms,
   listTeacherClassrooms,
+  fetchLiveAnswersFromTeacherHost,
+  fetchLiveQuestionFromTeacherHost,
   publishClassroomToTeacherHost,
+  publishLiveQuestionToTeacherHost,
   removeParticipant,
   saveGradeCell,
   saveGrade,
   scanTeacherHosts,
+  submitLiveAnswerToTeacherHost,
   submitGradeToTeacherHost,
   syncPendingWrites,
   saveResource,
@@ -54,6 +58,7 @@ import {
 } from "./firebase";
 import { getOfflineStore, getPendingWriteCount, isOnline, listenForOnline, setOfflineStore } from "./offlineStore";
 import { isLanServerAvailable, startLanServer } from "../modules/edumos-lan-server/src";
+import { connectToWifiDirectTeacher, discoverWifiDirectTeachers, isWifiDirectAvailable, startTeacherWifiDirectGroup } from "./wifiDirect";
 
 const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
 const DEFAULT_TEACHER = { email: "teacher@edumos.com", password: "teacher123" };
@@ -649,12 +654,16 @@ function StudentJoinPanel({ user, onConnected }) {
   const [connectMessage, setConnectMessage] = useState("");
   const [scanning, setScanning] = useState(false);
   const [nearbyPackages, setNearbyPackages] = useState([]);
+  const [wifiDirectDevices, setWifiDirectDevices] = useState([]);
 
   async function scanForHosts() {
     setScanning(true);
     setNearbyPackages([]);
-    setConnectMessage(hostClassroomId.trim() ? "Scanning teacher group by course ID..." : "Scanning known teacher hosts...");
+    setWifiDirectDevices([]);
+    setConnectMessage(hostClassroomId.trim() ? "Scanning Wi-Fi Direct and teacher group by course ID..." : "Scanning nearby Wi-Fi Direct teachers...");
     try {
+      const p2pResult = await discoverWifiDirectTeachers();
+      if (p2pResult.ok) setWifiDirectDevices(p2pResult.devices || []);
       const localPackages = Object.values(getOfflineStore().hostedPackages || {})
         .filter(item => item?.classroom?.id)
         .map(payload => ({ payload, classroom: payload.classroom, localPreview: true, stats: countPackageItems(payload) }));
@@ -669,10 +678,36 @@ function StudentJoinPanel({ user, onConnected }) {
       }
       setNearbyPackages(unique);
       setScanning(false);
-      setConnectMessage(unique.length ? "Teacher groups found. Tap Join Course." : "No teacher group found. Make sure teacher pressed Host Group and both devices are on the same Wi-Fi/hotspot.");
+      setConnectMessage((unique.length || p2pResult.devices?.length)
+        ? "Teacher devices/groups found. Tap Connect or Join Course."
+        : "No teacher group found. Make sure teacher pressed Host Group and Wi-Fi is on.");
     } catch (error) {
       setScanning(false);
       setConnectMessage(error.message);
+    }
+  }
+
+  async function connectWifiDirectDevice(device) {
+    try {
+      setConnectMessage(`Connecting to ${device.deviceName || "teacher"} with Wi-Fi Direct...`);
+      const connection = await connectToWifiDirectTeacher(device.deviceAddress);
+      setHostUrl(connection.hostUrl);
+      setConnectMessage(`Connected to teacher device. Downloading course from ${connection.hostUrl}...`);
+      let classroomId = hostClassroomId.trim();
+      if (!classroomId) {
+        const hosted = await scanTeacherHosts("", [connection.hostUrl]);
+        classroomId = hosted[0]?.classroom?.id || "";
+      }
+      const result = await connectToTeacherHost(connection.hostUrl, classroomId, user);
+      if (result.ok) {
+        const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
+        onConnected(result.classroom);
+      } else {
+        setConnectMessage(result.message);
+      }
+    } catch (error) {
+      setConnectMessage(error.message || "Could not connect with Wi-Fi Direct.");
     }
   }
 
@@ -734,6 +769,17 @@ function StudentJoinPanel({ user, onConnected }) {
         <Button tone="muted" title="Connect To Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
       </View>
       <Button title={scanning ? "Scanning..." : "Scan Nearby Teacher Groups"} onPress={scanForHosts} />
+      {!!wifiDirectDevices.length && (
+        <View style={styles.grid}>
+          {wifiDirectDevices.map(device => (
+            <Card key={device.deviceAddress} tone="soft">
+              <Title>{device.deviceName || "Teacher Device"}</Title>
+              <Text style={styles.bodyText}>Wi-Fi Direct device</Text>
+              <Button title="Connect Wi-Fi Direct" onPress={() => connectWifiDirectDevice(device)} />
+            </Card>
+          ))}
+        </View>
+      )}
       {!!nearbyPackages.length && (
         <View style={styles.grid}>
           {nearbyPackages.map(item => (
@@ -836,9 +882,10 @@ function TeacherClassroom({ classroom, tab, setTab, onPendingChange }) {
   return (
     <View>
       <Title>{classroom.name}</Title>
-      <Tabs tab={tab} setTab={setTab} tabs={["group", "resources", "participants", "grades"]} />
+      <Tabs tab={tab} setTab={setTab} tabs={["group", "resources", "live", "participants", "grades"]} />
       {tab === "group" && <TeacherHostPanel classroom={classroom} onPendingChange={onPendingChange} />}
       {tab === "resources" && <TeacherResources classroom={classroom} />}
+      {tab === "live" && <TeacherLiveQuiz classroom={classroom} />}
       {tab === "participants" && <Participants classroom={classroom} />}
       {tab === "grades" && <Grades classroom={classroom} editable />}
     </View>
@@ -858,15 +905,23 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
 
     if (Platform.OS === "android" && isLanServerAvailable()) {
       try {
+        let p2pHostUrl = "";
+        if (isWifiDirectAvailable()) {
+          setHostMessage("Creating Wi-Fi Direct teacher group...");
+          const p2pGroup = await startTeacherWifiDirectGroup();
+          if (p2pGroup.ok) {
+            p2pHostUrl = p2pGroup.hostUrl;
+          }
+        }
         const started = await startLanServer(10000, payload);
         if (started.ok) {
-          const hostAddress = started.url || localHostUrl;
+          const hostAddress = p2pHostUrl || started.url || localHostUrl;
           setLocalHostUrl(hostAddress);
           setOfflineStore(store => ({
             ...store,
             teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
           }));
-          setHostMessage(`Offline hotspot server started on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students must connect to this teacher hotspot/Wi-Fi, scan, then join.`);
+          setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
           onPendingChange?.();
           return;
         }
@@ -931,12 +986,90 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   );
 }
 
+function TeacherLiveQuiz({ classroom }) {
+  const [title, setTitle] = useState("Live Question");
+  const [question, setQuestion] = useState("");
+  const [answers, setAnswers] = useState(["", "", "", ""]);
+  const [correctIndex, setCorrectIndex] = useState("1");
+  const [timeLimit, setTimeLimit] = useState("30");
+  const [responses, setResponses] = useState([]);
+  const [message, setMessage] = useState("");
+  const hostUrl = getOfflineStore().teacherHostUrls?.[classroom.id] || "";
+
+  async function publish() {
+    if (!hostUrl) {
+      setMessage("Start the teacher group first so students have a local connection.");
+      return;
+    }
+    if (!question.trim() || answers.some(answer => !answer.trim())) {
+      setMessage("Enter the question and all four answers.");
+      return;
+    }
+    const liveQuestion = {
+      id: `live_${Date.now()}`,
+      title: title.trim() || "Live Question",
+      text: question.trim(),
+      answers: answers.map(answer => answer.trim()),
+      correctIndex: Math.max(0, Number(correctIndex) - 1),
+      timeLimitSeconds: Number(timeLimit) || 30
+    };
+    await publishLiveQuestionToTeacherHost(hostUrl, classroom.id, liveQuestion);
+    setResponses([]);
+    setMessage(`Live question sent to connected students for ${liveQuestion.timeLimitSeconds} seconds.`);
+  }
+
+  async function refreshAnswers() {
+    if (!hostUrl) {
+      setMessage("Start the teacher group first.");
+      return;
+    }
+    const result = await fetchLiveAnswersFromTeacherHost(hostUrl, classroom.id);
+    await fetchTeacherHostSnapshot(hostUrl, classroom.id, { queueForSync: true }).catch(() => null);
+    setResponses(result.answers || []);
+    setMessage(`${(result.answers || []).length} live answers received and saved locally.`);
+  }
+
+  return (
+    <Card>
+      <Title>Live Quiz</Title>
+      <Text style={styles.bodyText}>Broadcast one multiple-choice question to connected students over the local Wi-Fi Direct/TCP connection.</Text>
+      <Input value={title} onChangeText={setTitle} placeholder="Quiz Title" />
+      <Input value={question} onChangeText={setQuestion} placeholder="Question" />
+      {answers.map((answer, index) => (
+        <Input key={index} value={answer} onChangeText={value => {
+          const copy = [...answers];
+          copy[index] = value;
+          setAnswers(copy);
+        }} placeholder={`Answer ${index + 1}`} />
+      ))}
+      <View style={styles.sectionTools}>
+        <Input value={correctIndex} onChangeText={setCorrectIndex} placeholder="Correct Answer 1-4" keyboardType="numeric" />
+        <Input value={timeLimit} onChangeText={setTimeLimit} placeholder="Seconds" keyboardType="numeric" />
+      </View>
+      <View style={styles.tabs}>
+        <Button title="Broadcast Question" onPress={publish} />
+        <Button tone="muted" title="Refresh Answers" onPress={refreshAnswers} />
+      </View>
+      {!!message && <Text style={styles.noticeText}>{message}</Text>}
+      {responses.length ? responses.map(item => (
+        <View key={item.studentId || item.id} style={styles.manageRow}>
+          <View style={styles.manageText}>
+            <Text style={styles.heading}>{item.studentName || item.studentId}</Text>
+            <Text style={styles.bodyText}>Answer: {Number(item.answerIndex) + 1}</Text>
+          </View>
+        </View>
+      )) : <Text style={styles.bodyText}>No live answers yet.</Text>}
+    </Card>
+  );
+}
+
 function StudentClassroom({ classroom, tab, setTab, user }) {
   return (
     <View>
       <Title>{classroom.name}</Title>
-      <Tabs tab={tab} setTab={setTab} tabs={["resources", "grades"]} />
+      <Tabs tab={tab} setTab={setTab} tabs={["resources", "live", "grades"]} />
       {tab === "resources" && <StudentResources classroom={classroom} user={user} />}
+      {tab === "live" && <StudentLiveQuiz classroom={classroom} user={user} />}
       {tab === "grades" && <Grades classroom={classroom} student={user} />}
     </View>
   );
@@ -1250,6 +1383,80 @@ function StudentResources({ classroom, user }) {
         </Card>
       ))}
     </View>
+  );
+}
+
+function StudentLiveQuiz({ classroom, user }) {
+  const [question, setQuestion] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(null);
+  const [message, setMessage] = useState("");
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  async function checkQuestion() {
+    if (!classroom.teacherHostUrl) {
+      setMessage("Connect to the teacher group first.");
+      return;
+    }
+    const result = await fetchLiveQuestionFromTeacherHost(classroom.teacherHostUrl, classroom.id);
+    if (!result.question) {
+      setMessage("No live question is active yet.");
+      return;
+    }
+    setQuestion(result.question);
+    setSelectedIndex(null);
+    const elapsed = Math.floor((Date.now() - (result.question.publishedAt || Date.now())) / 1000);
+    setSecondsLeft(Math.max(0, (result.question.timeLimitSeconds || 30) - elapsed));
+    setMessage("Live question loaded.");
+  }
+
+  async function submit() {
+    if (!question || selectedIndex === null) {
+      setMessage("Choose an answer first.");
+      return;
+    }
+    if (!classroom.teacherHostUrl) {
+      setMessage("Teacher connection is not available.");
+      return;
+    }
+    await submitLiveAnswerToTeacherHost(classroom.teacherHostUrl, classroom.id, {
+      questionId: question.id,
+      questionTitle: question.title,
+      studentId: user.id,
+      studentName: user.name,
+      answerIndex: selectedIndex,
+      submittedAt: Date.now()
+    });
+    const value = selectedIndex === question.correctIndex ? "1/1" : "0/1";
+    await saveGrade(classroom.id, user.id, question.title || "Live Quiz", value);
+    setMessage("Answer submitted to teacher and saved on this device.");
+  }
+
+  useEffect(() => {
+    if (!question || secondsLeft <= 0) return undefined;
+    const timer = setInterval(() => setSecondsLeft(value => Math.max(0, value - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [question, secondsLeft]);
+
+  return (
+    <Card>
+      <Title>Live Quiz</Title>
+      <Text style={styles.bodyText}>Receive the current teacher question over the offline Wi-Fi Direct/LAN connection.</Text>
+      <Button title="Check Live Question" onPress={checkQuestion} />
+      {!!question && (
+        <View style={styles.sectionPanel}>
+          <Text style={styles.heading}>{question.title}</Text>
+          <Text style={styles.question}>{question.text}</Text>
+          <Text style={styles.bodyText}>Time left: {secondsLeft}s</Text>
+          {(question.answers || []).map((answer, index) => (
+            <Pressable key={index} accessibilityRole="button" focusable tabIndex={0} onPress={() => setSelectedIndex(index)} style={({ hovered, focused }) => [styles.choice, selectedIndex === index && styles.choiceSelected, (hovered || focused) && styles.choiceFocus]}>
+              <Text>{index + 1}. {answer}</Text>
+            </Pressable>
+          ))}
+          <Button title="Submit Live Answer" onPress={submit} />
+        </View>
+      )}
+      {!!message && <Text style={styles.noticeText}>{message}</Text>}
+    </Card>
   );
 }
 
