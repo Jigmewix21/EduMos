@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import QRCode from "qrcode";
 import {
   createClassroom,
   createGradeColumn,
@@ -274,7 +275,7 @@ export default function App() {
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={[styles.content, compact && styles.contentCompact]}>
-      <Header compact={compact} onHome={() => navigate("home")} onAbout={() => navigate("about")} onLogout={user ? logout : null} online={online} pendingWrites={pendingWrites} onSync={syncNow} />
+      <Header compact={compact} onHome={() => navigate("home")} onAbout={() => navigate("about")} onLogout={user ? logout : null} online={online} pendingWrites={pendingWrites} onSync={syncNow} showStatus={role !== "teacher"} />
       {screen === "home" && <Home compact={compact} setScreen={navigate} setRole={setRole} setEmail={setEmail} setPassword={setPassword} />}
       {screen === "about" && <About />}
       {screen === "studentSetup" && <StudentSetup onCreate={createLocalStudentProfile} message={message} />}
@@ -349,7 +350,7 @@ export default function App() {
   );
 }
 
-function Header({ compact, onHome, onAbout, onLogout, online, pendingWrites, onSync }) {
+function Header({ compact, onHome, onAbout, onLogout, online, pendingWrites, onSync, showStatus = true }) {
   return (
     <View style={[styles.nav, compact && styles.navCompact]}>
       <Pressable accessibilityRole="button" focusable tabIndex={0} onKeyDown={event => activateByKeyboard(event, onHome)} onPress={onHome} style={({ hovered, focused }) => [styles.brandLockup, (hovered || focused) && styles.brandLockupFocus]}>
@@ -357,8 +358,8 @@ function Header({ compact, onHome, onAbout, onLogout, online, pendingWrites, onS
         <Text style={styles.logo}>EduMos</Text>
       </Pressable>
       <View style={[styles.navLinks, compact && styles.navLinksCompact]}>
-        <Text style={[styles.statusPill, !online && styles.statusPillOffline]}>{online ? "Online" : "Offline"} | {pendingWrites} waiting</Text>
-        {pendingWrites > 0 && <NavButton title="Sync" onPress={onSync} />}
+        {showStatus && <Text style={[styles.statusPill, !online && styles.statusPillOffline]}>{online ? "Online" : "Offline"} | {pendingWrites} waiting</Text>}
+        {showStatus && pendingWrites > 0 && <NavButton title="Sync" onPress={onSync} />}
         <NavButton title="Home" onPress={onHome} />
         <NavButton title="About Us" onPress={onAbout} />
         {onLogout && <NavButton title="Logout" onPress={onLogout} />}
@@ -882,10 +883,9 @@ function TeacherClassroom({ classroom, tab, setTab, onPendingChange }) {
   return (
     <View>
       <Title>{classroom.name}</Title>
-      <Tabs tab={tab} setTab={setTab} tabs={["group", "resources", "live", "participants", "grades"]} />
-      {tab === "group" && <TeacherHostPanel classroom={classroom} onPendingChange={onPendingChange} />}
+      <Tabs tab={tab === "group" || tab === "live" ? "host" : tab} setTab={setTab} tabs={["host", "resources", "participants", "grades"]} />
+      {(tab === "host" || tab === "group" || tab === "live") && <TeacherHostPanel classroom={classroom} onPendingChange={onPendingChange} />}
       {tab === "resources" && <TeacherResources classroom={classroom} />}
-      {tab === "live" && <TeacherLiveQuiz classroom={classroom} />}
       {tab === "participants" && <Participants classroom={classroom} />}
       {tab === "grades" && <Grades classroom={classroom} editable />}
     </View>
@@ -897,8 +897,25 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   const [localHostUrl, setLocalHostUrl] = useState(() => getOfflineStore().teacherHostUrls?.[classroom.id] || "http://192.168.43.1:10000");
   const [hostMessage, setHostMessage] = useState("");
   const [queueCount, setQueueCount] = useState(getPendingWriteCount());
+  const [hostPage, setHostPage] = useState("menu");
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [networkName, setNetworkName] = useState(`EduMos-${classroom.name}`.replace(/\s+/g, "-").slice(0, 28));
+  const [networkPassword, setNetworkPassword] = useState("Shown by Android Wi-Fi/Hotspot settings");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
+  async function buildQr(hostAddress, details = {}) {
+    const payload = {
+      type: "edumos-classroom",
+      classroomId: classroom.id,
+      classroomName: classroom.name,
+      url: hostAddress,
+      networkName: details.networkName || networkName,
+      password: details.networkPassword || networkPassword
+    };
+    const dataUrl = await QRCode.toDataURL(JSON.stringify(payload), { margin: 1, width: 260 });
+    setQrDataUrl(dataUrl);
+  }
   async function hostClassroom() {
+    setHostPage("host");
     setHostMessage("Preparing classroom package...");
     const payload = await getClassroomOfflinePackage(classroom.id);
     setPackageText(JSON.stringify(payload));
@@ -907,11 +924,17 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     if (Platform.OS === "android" && isLanServerAvailable()) {
       try {
         let p2pHostUrl = "";
+        let qrNetworkName = networkName;
+        let qrNetworkPassword = networkPassword;
         if (isWifiDirectAvailable()) {
           setHostMessage("Creating Wi-Fi Direct teacher group...");
           const p2pGroup = await startTeacherWifiDirectGroup();
           if (p2pGroup.ok) {
             p2pHostUrl = p2pGroup.hostUrl;
+            qrNetworkName = p2pGroup.group?.networkName || qrNetworkName;
+            qrNetworkPassword = p2pGroup.group?.passphrase || qrNetworkPassword;
+            setNetworkName(qrNetworkName);
+            setNetworkPassword(qrNetworkPassword);
           }
         }
         const started = await startLanServer(10000, payload);
@@ -922,6 +945,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             ...store,
             teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
           }));
+          await buildQr(hostAddress, { networkName: qrNetworkName, networkPassword: qrNetworkPassword });
           setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
           setQueueCount(getPendingWriteCount());
           onPendingChange?.();
@@ -938,8 +962,10 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     }));
     try {
       await publishClassroomToTeacherHost(localHostUrl, classroom.id, payload);
+      await buildQr(localHostUrl);
       setHostMessage(`Hosting package ready on ${localHostUrl}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Course ID: ${classroom.id}.`);
     } catch (_error) {
+      await buildQr(localHostUrl);
       setHostMessage(`Package ready. Start the local backend or share the package JSON. Course ID: ${classroom.id}.`);
     }
     onPendingChange?.();
@@ -959,43 +985,81 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     setHostMessage(result.pending ? `${result.pending} records still waiting for internet.` : "All offline classroom data is synced.");
     onPendingChange?.();
   }
+  function openConnectPage() {
+    setHostPage("connect");
+    setHostMessage("Open Wi-Fi, connect to EduMos/Wi-Fi Direct/classroom LAN, then return here.");
+  }
+  if (hostPage === "menu") {
+    return (
+      <Card>
+        <Title>Host Classroom</Title>
+        <Text style={styles.bodyText}>Choose how this teacher device will share resources and receive student progress offline.</Text>
+        <View style={styles.hostChoiceGrid}>
+          <Pressable accessibilityRole="button" focusable tabIndex={0} onPress={hostClassroom} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
+            <Text style={styles.modeTitle}>Host</Text>
+            <Text style={styles.bodyText}>Start EduMos sharing on this teacher phone and show QR details for students.</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" focusable tabIndex={0} onPress={openConnectPage} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
+            <Text style={styles.modeTitle}>Connect LAN/EduMos Device</Text>
+            <Text style={styles.bodyText}>Open Wi-Fi tools to connect this phone to an EduMos/classroom network.</Text>
+          </Pressable>
+        </View>
+        <View style={styles.syncQueueBox}>
+          <Text style={styles.modeTitle}>Teacher Local Database</Text>
+          <Text style={styles.bodyText}>Resources, participants, quiz answers, and grades are saved on this device and synced later.</Text>
+        </View>
+      </Card>
+    );
+  }
+  if (hostPage === "connect") {
+    return (
+      <Card>
+        <View style={styles.row}>
+          <Title>Connect LAN/EduMos Device</Title>
+          <Button tone="muted" title="Back" onPress={() => setHostPage("menu")} />
+        </View>
+        <Text style={styles.bodyText}>Connect this teacher phone to an EduMos Wi-Fi Direct group or classroom LAN. After connection, the Host page will show Connected and Live details.</Text>
+        <View style={styles.hostChoiceGrid}>
+          <Button title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
+          <Button tone="muted" title="Open Hotspot/Wi-Fi Direct Settings" onPress={() => openDeviceSetting("android.settings.TETHER_SETTINGS")} />
+        </View>
+        <Text style={styles.noticeText}>Android does not allow EduMos to silently force hotspot on or read the real hotspot password. The app opens the correct settings and shows EduMos connection details after hosting.</Text>
+        {!!hostMessage && <Text style={styles.noticeText}>{hostMessage}</Text>}
+      </Card>
+    );
+  }
   return (
       <Card>
-      <Title>Create Teacher Group</Title>
-      <Text style={styles.bodyText}>Share this classroom without internet. Use Wi-Fi Direct for small groups, or Large Class LAN when many students are connected to the same offline router/Wi-Fi.</Text>
-      {Platform.OS !== "android" && <Text style={styles.noticeText}>Wi-Fi Direct hosting works in the Android APK. Web preview can prepare packages, but cannot start the phone-to-phone server.</Text>}
-      <View style={styles.modeGrid}>
-        <View style={styles.modeCard}>
-          <Text style={styles.modeTitle}>Wi-Fi Direct</Text>
-          <Text style={styles.bodyText}>No password. Best for small groups because phone hardware limits P2P clients.</Text>
-          <Text style={styles.modeMeta}>Recommended: 5-8 students</Text>
-        </View>
-        <View style={styles.modeCard}>
-          <Text style={styles.modeTitle}>Large Class LAN</Text>
-          <Text style={styles.bodyText}>Use an offline classroom router or shared Wi-Fi. Students still need no internet.</Text>
-          <Text style={styles.modeMeta}>Designed for up to 100 students</Text>
-        </View>
+      <View style={styles.row}>
+        <Title>EduMos Host</Title>
+        <Button tone="muted" title="Back" onPress={() => setHostPage("menu")} />
       </View>
-      <View style={styles.stepList}>
-        <GuideStep number="1" title="Turn On Hotspot" text="Open hotspot settings and let students connect to your Wi-Fi." />
-        <GuideStep number="2" title="Start Group" text="Press Host Group to prepare resources for students." />
-        <GuideStep number="3" title="Share Details" text="Students use the address and course ID below to join." />
+      <View style={styles.connectionBanner}>
+        <Text style={styles.connectionState}>Connected</Text>
+        <Text style={styles.connectionStateLive}>Live</Text>
+      </View>
+      <Text style={styles.bodyText}>Students scan this QR or use the module name and connection details below to receive classroom resources.</Text>
+      {Platform.OS !== "android" && <Text style={styles.noticeText}>Wi-Fi Direct hosting works in the Android APK. Web preview can prepare packages, but cannot start the phone-to-phone server.</Text>}
+      <View style={styles.modulePanel}>
+        <Text style={styles.summaryLabel}>Module Name</Text>
+        <Text style={styles.moduleName}>{networkName}</Text>
+        {qrDataUrl ? <Image source={{ uri: qrDataUrl }} style={styles.qrImage} resizeMode="contain" /> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
       </View>
       <View style={styles.hostShareBox}>
-        <Text style={styles.howTitle}>Student URL</Text>
+        <Text style={styles.howTitle}>EduMos URL</Text>
         <Text style={styles.shareCode}>{localHostUrl || defaultHost}</Text>
         <Text style={styles.howTitle}>Course ID</Text>
         <Text style={styles.shareCode}>{classroom.id}</Text>
+        <Text style={styles.howTitle}>Password</Text>
+        <Text style={styles.shareCode}>{networkPassword}</Text>
       </View>
       <View style={styles.syncQueueBox}>
         <Text style={styles.modeTitle}>Sync Queue</Text>
         <Text style={styles.bodyText}>{queueCount} local records are waiting to upload when internet returns.</Text>
       </View>
-      <Input value={localHostUrl} onChangeText={setLocalHostUrl} placeholder="Local backend URL on teacher device" />
       <View style={styles.tabs}>
-        <Button tone="muted" title="Turn On Hotspot" onPress={() => openDeviceSetting("android.settings.TETHER_SETTINGS")} />
-        <Button tone="muted" title="Open Wi-Fi Settings" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
-        <Button title="Host Group" onPress={hostClassroom} />
+        <Button title="Host" onPress={hostClassroom} />
+        <Button tone="muted" title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
         {!!packageText && <Button tone="muted" title="Copy Package" onPress={copyPackage} />}
         <Button tone="muted" title="Sync When Online" onPress={sync} />
       </View>
@@ -1837,6 +1901,15 @@ const styles = StyleSheet.create({
   radarRingSmall: { position: "absolute", width: 62, height: 62, borderRadius: 31, borderColor: "#2ecc71", borderWidth: 2, opacity: 0.45 },
   radarDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#4b5cff" },
   hostShareBox: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 8 },
+  hostChoiceGrid: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
+  hostChoice: { flexGrow: 1, flexBasis: 260, backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 20, gap: 10, cursor: "pointer" },
+  connectionBanner: { flexDirection: "row", gap: 10, flexWrap: "wrap", alignItems: "center" },
+  connectionState: { color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
+  connectionStateLive: { color: "#991b1b", backgroundColor: "#fee2e2", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
+  modulePanel: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 12, alignItems: "center" },
+  moduleName: { color: "#0f172a", fontSize: 24, fontWeight: "900", textAlign: "center" },
+  qrImage: { width: 260, height: 260, backgroundColor: "white", borderRadius: 8 },
+  qrPlaceholder: { width: 260, height: 260, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", padding: 16 },
   modeGrid: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
   modeCard: { flexGrow: 1, flexBasis: 260, backgroundColor: "#ffffff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 16, gap: 8 },
   modeTitle: { color: "#123a5f", fontSize: 18, fontWeight: "900" },
