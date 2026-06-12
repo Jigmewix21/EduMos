@@ -195,6 +195,32 @@ export async function listTeacherClassrooms(teacherId) {
   }, () => Object.values(getCollection("classrooms")).filter(item => item.teacherId === teacherId));
 }
 
+export async function deleteClassroom(classroomId) {
+  deleteCollectionItem("classrooms", classroomId);
+  Object.values(getCollection("participants"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("participants", keyOf(classroomId, item.studentId || item.id)));
+  Object.values(getCollection("sections"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("sections", keyOf(classroomId, item.id)));
+  Object.values(getCollection("resources"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("resources", keyOf(classroomId, item.sectionId, item.id)));
+  Object.values(getCollection("quizzes"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("quizzes", keyOf(classroomId, item.sectionId, item.id)));
+  Object.values(getCollection("grades"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("grades", keyOf(classroomId, item.id)));
+  Object.values(getCollection("gradeColumns"))
+    .filter(item => item.classroomId === classroomId)
+    .forEach(item => deleteCollectionItem("gradeColumns", keyOf(classroomId, item.id)));
+  return tryFirestore(
+    () => deleteDoc(doc(db, "classrooms", classroomId)),
+    () => queueWrite({ action: "deleteClassroom", classroomId })
+  );
+}
+
 export async function enrollStudent(student, key) {
   const cleanKey = key.trim().toUpperCase();
   const saveParticipant = async classroom => {
@@ -822,6 +848,9 @@ function normalizeHostUrl(hostUrl) {
 async function applyPendingWrite(write) {
   if (write.action === "setClassroom") {
     await setDoc(doc(db, "classrooms", write.classroom.id), write.classroom);
+  }
+  if (write.action === "deleteClassroom") {
+    await deleteDoc(doc(db, "classrooms", write.classroomId));
   }
   if (write.action === "setParticipant") {
     await setDoc(doc(db, "classrooms", write.classroomId, "participants", write.participant.studentId), write.participant);

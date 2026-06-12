@@ -15,7 +15,8 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
-import QRCode from "qrcode";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import QRCode from "react-native-qrcode-svg";
 import {
   createClassroom,
   createGradeColumn,
@@ -23,6 +24,7 @@ import {
   createSection,
   createTeacher,
   connectToTeacherHost,
+  deleteClassroom,
   deleteStudentCourse,
   enrollStudent,
   fetchTeacherHostSnapshot,
@@ -599,12 +601,57 @@ function TeacherSignup({ onDone }) {
 function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, message }) {
   const [key, setKey] = useState("");
   const [savedClassrooms, setSavedClassrooms] = useState(classrooms);
+  const [page, setPage] = useState("home");
+  const [openMenuId, setOpenMenuId] = useState("");
   useEffect(() => setSavedClassrooms(classrooms), [classrooms]);
   async function removeCourse(room) {
     const ok = confirmDanger(`Delete "${room.name}" from this device? You can join it again later from your teacher.`);
     if (!ok) return;
     await deleteStudentCourse(room.id, user.id);
     setSavedClassrooms(items => items.filter(item => item.id !== room.id));
+    setOpenMenuId("");
+  }
+  if (page === "join") {
+    return (
+      <View>
+        <View style={styles.row}>
+          <Title>Join Teacher Group</Title>
+          <Button tone="muted" title="Back" onPress={() => setPage("home")} />
+        </View>
+        <StudentJoinPanel user={user} onConnected={onConnected} />
+        {!!message && <Text style={styles.bodyText}>{message}</Text>}
+      </View>
+    );
+  }
+  if (page === "courses") {
+    return (
+      <View>
+        <View style={styles.row}>
+          <Title>My Downloaded Courses</Title>
+          <Button tone="muted" title="Back" onPress={() => setPage("home")} />
+        </View>
+        <View style={styles.courseList}>
+          {savedClassrooms.length ? savedClassrooms.map(room => (
+            <View key={room.id} style={styles.courseRow}>
+              <Pressable accessibilityRole="button" style={styles.courseNameArea} onPress={() => onOpen(room)}>
+                <Text style={styles.heading}>{room.name}</Text>
+              </Pressable>
+              <View style={styles.menuWrap}>
+                <Pressable accessibilityRole="button" onPress={() => setOpenMenuId(openMenuId === room.id ? "" : room.id)} style={styles.dotsButton}>
+                  <Text style={styles.dotsText}>⋮</Text>
+                </Pressable>
+                {openMenuId === room.id && (
+                  <View style={styles.popMenu}>
+                    <Button title="Open Course" onPress={() => onOpen(room)} />
+                    <Button tone="danger" title="Delete Course" onPress={() => removeCourse(room)} />
+                  </View>
+                )}
+              </View>
+            </View>
+          )) : <Card><Title>No Courses Yet</Title><Text style={styles.bodyText}>Courses appear here only after you join and download from your teacher.</Text></Card>}
+        </View>
+      </View>
+    );
   }
   return (
     <View>
@@ -621,28 +668,15 @@ function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, mes
           <Text style={styles.summaryMeta}>available offline</Text>
         </View>
       </View>
-      <StudentJoinPanel user={user} onConnected={onConnected} />
-      <Card tone="soft">
-        <Title>Have A Classroom Key?</Title>
-        <Text style={styles.bodyText}>Use this when your teacher gives you an enrollment key instead of hotspot sharing.</Text>
-        <View style={styles.sectionTools}>
-          <Input value={key} onChangeText={setKey} placeholder="Enter classroom key" onSubmitEditing={() => onEnroll(key)} />
-          <Button title="Join With Key" onPress={() => onEnroll(key)} />
-        </View>
-        {!!message && <Text style={styles.bodyText}>{message}</Text>}
-      </Card>
-      <Title>My Downloaded Courses</Title>
-      <View style={styles.grid}>
-        {savedClassrooms.length ? savedClassrooms.map(room => (
-          <Pressable key={room.id} accessibilityRole="button" focusable tabIndex={0} onKeyDown={event => activateByKeyboard(event, () => onOpen(room))} style={({ hovered, focused }) => [styles.card, styles.clickableCard, (hovered || focused) && styles.clickableCardFocus]} onPress={() => onOpen(room)}>
-            <Title>{room.name}</Title>
-            <Text style={styles.bodyText}>Open saved resources, quizzes, and grades.</Text>
-            <View style={styles.tableActions}>
-              <Button title="Open Course" onPress={() => onOpen(room)} />
-              <Button tone="danger" title="Delete Course" onPress={() => removeCourse(room)} />
-            </View>
-          </Pressable>
-        )) : <Card><Title>No Courses Yet</Title><Text style={styles.bodyText}>Join a teacher group or enter a classroom key to download your first course.</Text></Card>}
+      <View style={styles.hostChoiceGrid}>
+        <Pressable accessibilityRole="button" onPress={() => setPage("join")} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
+          <Text style={styles.modeTitle}>Join Teachers Group</Text>
+          <Text style={styles.bodyText}>Scan nearby teacher or QR to download course resources.</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setPage("courses")} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
+          <Text style={styles.modeTitle}>My Downloaded Course</Text>
+          <Text style={styles.bodyText}>Open resources saved on this phone for offline access.</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -654,6 +688,8 @@ function StudentJoinPanel({ user, onConnected }) {
   const [packageText, setPackageText] = useState("");
   const [connectMessage, setConnectMessage] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [nearbyPackages, setNearbyPackages] = useState([]);
   const [wifiDirectDevices, setWifiDirectDevices] = useState([]);
 
@@ -746,15 +782,62 @@ function StudentJoinPanel({ user, onConnected }) {
     }
   }
 
+  async function openQrScanner() {
+    if (Platform.OS === "web") {
+      setConnectMessage("QR scanning works in the Android APK. Use manual join in web preview.");
+      return;
+    }
+    if (!cameraPermission?.granted) {
+      const result = await requestCameraPermission();
+      if (!result.granted) {
+        setConnectMessage("Camera permission is needed to scan the teacher QR.");
+        return;
+      }
+    }
+    setScannerOpen(true);
+    setConnectMessage("Point the camera at the teacher EduMos QR.");
+  }
+
+  async function handleQrScanned(event) {
+    if (!scannerOpen) return;
+    setScannerOpen(false);
+    try {
+      const payload = JSON.parse(event.data || event.nativeEvent?.data || "");
+      if (payload.type !== "edumos-classroom" || !payload.url || !payload.classroomId) {
+        setConnectMessage("This QR is not an EduMos classroom QR.");
+        return;
+      }
+      setHostUrl(payload.url);
+      setHostClassroomId(payload.classroomId);
+      setConnectMessage("QR scanned. Joining teacher course...");
+      const result = await connectToTeacherHost(payload.url, payload.classroomId, user);
+      if (result.ok) {
+        const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
+        onConnected(result.classroom);
+      } else {
+        setConnectMessage(result.message);
+      }
+    } catch (_error) {
+      setConnectMessage("Could not read this QR. Ask teacher to show the EduMos QR again.");
+    }
+  }
+
   return (
     <Card>
       <Title>Join Teacher Group</Title>
       <Text style={styles.bodyText}>Join your teacher without internet. Scan for Wi-Fi Direct, or enter the teacher URL when your class is using a large offline Wi-Fi network.</Text>
-      <View style={styles.stepList}>
-        <GuideStep number="1" title="Open Wi-Fi" text="Turn on Wi-Fi. For large classes, connect to the classroom router." />
-        <GuideStep number="2" title="Find The Group" text="Scan nearby Wi-Fi Direct teachers or enter the URL shown by your teacher." />
-        <GuideStep number="3" title="Join Course" text="The course opens immediately and resources stay saved for offline use." />
-      </View>
+      {scannerOpen && (
+        <View style={styles.scannerBox}>
+          <CameraView
+            style={styles.cameraPreview}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            onBarcodeScanned={handleQrScanned}
+          />
+          <Button tone="muted" title="Close Scanner" onPress={() => setScannerOpen(false)} />
+        </View>
+      )}
       <View style={styles.joinStage}>
         <View style={[styles.radar, scanning && styles.radarActive]}>
           <View style={styles.radarRingLarge} />
@@ -767,7 +850,8 @@ function StudentJoinPanel({ user, onConnected }) {
         </View>
       </View>
       <View style={styles.tabs}>
-        <Button tone="muted" title="Connect To Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
+        <Button title="Scan Teacher QR" onPress={openQrScanner} />
+        <Button tone="muted" title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
       </View>
       <Button title={scanning ? "Scanning..." : "Scan Nearby Teacher Groups"} onPress={scanForHosts} />
       {!!wifiDirectDevices.length && (
@@ -848,6 +932,7 @@ function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
   const [message, setMessage] = useState("");
+  const [openMenuId, setOpenMenuId] = useState("");
   async function create() {
     const result = await createClassroom(user.id, name, key);
     setMessage(result.ok ? `Classroom created: ${result.classroom.enrollmentKey}` : result.message);
@@ -856,6 +941,13 @@ function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
       setKey("");
       onCreated();
     }
+  }
+  async function removeCourse(room) {
+    const ok = confirmDanger(`Delete course "${room.name}" and its local data?`);
+    if (!ok) return;
+    await deleteClassroom(room.id);
+    setOpenMenuId("");
+    onCreated();
   }
   return (
     <View>
@@ -869,10 +961,25 @@ function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
       </Card>
       <View style={styles.grid4}>
         {classrooms.map(room => (
-          <Pressable key={room.id} accessibilityRole="button" focusable tabIndex={0} onKeyDown={event => activateByKeyboard(event, () => onOpen(room))} style={({ hovered, focused }) => [styles.card, styles.clickableCard, (hovered || focused) && styles.clickableCardFocus]} onPress={() => onOpen(room)}>
-            <Title>{room.name}</Title>
-            <Text>Key: {room.enrollmentKey}</Text>
-          </Pressable>
+          <View key={room.id} style={styles.card}>
+            <View style={styles.courseCardHeader}>
+              <Pressable accessibilityRole="button" onPress={() => onOpen(room)} style={styles.courseNameArea}>
+                <Title>{room.name}</Title>
+                <Text>Key: {room.enrollmentKey}</Text>
+              </Pressable>
+              <View style={styles.menuWrap}>
+                <Pressable accessibilityRole="button" onPress={() => setOpenMenuId(openMenuId === room.id ? "" : room.id)} style={styles.dotsButton}>
+                  <Text style={styles.dotsText}>⋮</Text>
+                </Pressable>
+                {openMenuId === room.id && (
+                  <View style={styles.popMenu}>
+                    <Button title="Open Course" onPress={() => onOpen(room)} />
+                    <Button tone="danger" title="Delete Course" onPress={() => removeCourse(room)} />
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
         ))}
       </View>
     </View>
@@ -898,7 +1005,8 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   const [hostMessage, setHostMessage] = useState("");
   const [queueCount, setQueueCount] = useState(getPendingWriteCount());
   const [hostPage, setHostPage] = useState("menu");
-  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrPayload, setQrPayload] = useState("");
+  const [isHosting, setIsHosting] = useState(false);
   const [networkName, setNetworkName] = useState(`EduMos-${classroom.name}`.replace(/\s+/g, "-").slice(0, 28));
   const [networkPassword, setNetworkPassword] = useState("Shown by Android Wi-Fi/Hotspot settings");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
@@ -911,11 +1019,11 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       networkName: details.networkName || networkName,
       password: details.networkPassword || networkPassword
     };
-    const dataUrl = await QRCode.toDataURL(JSON.stringify(payload), { margin: 1, width: 260 });
-    setQrDataUrl(dataUrl);
+    setQrPayload(JSON.stringify(payload));
   }
   async function hostClassroom() {
     setHostPage("host");
+    setIsHosting(false);
     setHostMessage("Preparing classroom package...");
     const payload = await getClassroomOfflinePackage(classroom.id);
     setPackageText(JSON.stringify(payload));
@@ -946,12 +1054,14 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
           }));
           await buildQr(hostAddress, { networkName: qrNetworkName, networkPassword: qrNetworkPassword });
+          setIsHosting(true);
           setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
           setQueueCount(getPendingWriteCount());
           onPendingChange?.();
           return;
         }
       } catch (error) {
+        setIsHosting(false);
         setHostMessage(`Could not start phone hotspot server: ${error.message}. You can still use a local backend URL if one is running.`);
       }
     }
@@ -963,9 +1073,11 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     try {
       await publishClassroomToTeacherHost(localHostUrl, classroom.id, payload);
       await buildQr(localHostUrl);
+      setIsHosting(true);
       setHostMessage(`Hosting package ready on ${localHostUrl}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Course ID: ${classroom.id}.`);
     } catch (_error) {
       await buildQr(localHostUrl);
+      setIsHosting(false);
       setHostMessage(`Package ready. Start the local backend or share the package JSON. Course ID: ${classroom.id}.`);
     }
     onPendingChange?.();
@@ -1034,16 +1146,18 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
         <Title>EduMos Host</Title>
         <Button tone="muted" title="Back" onPress={() => setHostPage("menu")} />
       </View>
-      <View style={styles.connectionBanner}>
-        <Text style={styles.connectionState}>Connected</Text>
-        <Text style={styles.connectionStateLive}>Live</Text>
-      </View>
+      {isHosting && (
+        <View style={styles.connectionBanner}>
+          <Text style={styles.connectionState}>Connected</Text>
+          <Text style={styles.connectionStateLive}>Live</Text>
+        </View>
+      )}
       <Text style={styles.bodyText}>Students scan this QR or use the module name and connection details below to receive classroom resources.</Text>
       {Platform.OS !== "android" && <Text style={styles.noticeText}>Wi-Fi Direct hosting works in the Android APK. Web preview can prepare packages, but cannot start the phone-to-phone server.</Text>}
       <View style={styles.modulePanel}>
         <Text style={styles.summaryLabel}>Module Name</Text>
         <Text style={styles.moduleName}>{networkName}</Text>
-        {qrDataUrl ? <Image source={{ uri: qrDataUrl }} style={styles.qrImage} resizeMode="contain" /> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
+        {qrPayload ? <View style={styles.qrImage}><QRCode value={qrPayload} size={236} /></View> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
       </View>
       <View style={styles.hostShareBox}>
         <Text style={styles.howTitle}>EduMos URL</Text>
@@ -1060,10 +1174,8 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       <View style={styles.tabs}>
         <Button title="Host" onPress={hostClassroom} />
         <Button tone="muted" title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
-        {!!packageText && <Button tone="muted" title="Copy Package" onPress={copyPackage} />}
         <Button tone="muted" title="Sync When Online" onPress={sync} />
       </View>
-      {!!packageText && <Input value={packageText} onChangeText={setPackageText} multiline />}
       {!!hostMessage && <Text style={styles.noticeText}>{hostMessage}</Text>}
     </Card>
   );
@@ -1846,6 +1958,14 @@ const styles = StyleSheet.create({
   lightText: { color: "#e2e8f0", lineHeight: 24 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
   grid4: { flexDirection: "row", flexWrap: "wrap", gap: 18 },
+  courseList: { gap: 12 },
+  courseRow: { backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, boxShadow: "0 8px 22px rgba(15,23,42,0.07)" },
+  courseCardHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  courseNameArea: { flex: 1, minWidth: 0 },
+  menuWrap: { position: "relative", alignItems: "flex-end" },
+  dotsButton: { width: 42, height: 42, borderRadius: 8, backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  dotsText: { color: "#123a5f", fontSize: 24, fontWeight: "900", lineHeight: 28 },
+  popMenu: { position: "absolute", right: 0, top: 46, zIndex: 10, width: 190, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 10, gap: 8, boxShadow: "0 14px 30px rgba(15,23,42,0.16)" },
   card: { backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 22, gap: 12, flexGrow: 1, flexBasis: 260, boxShadow: "0 8px 22px rgba(15,23,42,0.07)" },
   clickableCard: { cursor: "pointer" },
   clickableCardFocus: { borderColor: "#4b5cff", transform: [{ translateY: -2 }], boxShadow: "0 14px 30px rgba(75,92,255,0.16)" },
@@ -1894,6 +2014,8 @@ const styles = StyleSheet.create({
   guideCopy: { flex: 1, minWidth: 0 },
   guideTitle: { color: "#123a5f", fontSize: 16, fontWeight: "900" },
   joinStage: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, flexDirection: "row", alignItems: "center", gap: 18, flexWrap: "wrap" },
+  scannerBox: { backgroundColor: "#0f172a", borderRadius: 8, padding: 12, gap: 12 },
+  cameraPreview: { width: "100%", height: 360, borderRadius: 8, overflow: "hidden" },
   joinCopy: { flex: 1, minWidth: 220 },
   radar: { width: 132, height: 132, borderRadius: 66, backgroundColor: "#eef5ff", alignItems: "center", justifyContent: "center", position: "relative", borderColor: "#c7d2fe", borderWidth: 1 },
   radarActive: { backgroundColor: "#ecfdf5", borderColor: "#2ecc71" },

@@ -2,7 +2,7 @@
   "expo": {
     "name": "EduMos",
     "slug": "edumos-web2",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "orientation": "portrait",
     "icon": "./assets/edumos-icon.png",
     "platforms": [
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.edumos.offlinelearning",
-      "versionCode": 14,
+      "versionCode": 15,
       "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.INTERNET",
@@ -25,7 +25,8 @@
         "android.permission.CHANGE_WIFI_STATE",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.NEARBY_WIFI_DEVICES"
+        "android.permission.NEARBY_WIFI_DEVICES",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/edumos-icon.png",
