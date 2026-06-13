@@ -2,7 +2,7 @@
   "expo": {
     "name": "EduMos",
     "slug": "edumos-web2",
-    "version": "1.0.16",
+    "version": "1.0.17",
     "orientation": "portrait",
     "icon": "./assets/edumos-icon.png",
     "platforms": [
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.edumos.offlinelearning",
-      "versionCode": 17,
+      "versionCode": 18,
       "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.INTERNET",
