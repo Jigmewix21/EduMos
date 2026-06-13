@@ -635,7 +635,7 @@ function StudentDashboard({ user, classrooms, onEnroll, onConnected, onOpen, mes
               </Pressable>
               <View style={styles.menuWrap}>
                 <Pressable accessibilityRole="button" onPress={() => setOpenMenuId(openMenuId === room.id ? "" : room.id)} style={styles.dotsButton}>
-                  <Text style={styles.dotsText}>...</Text>
+                  <Text style={styles.dotsText}>Menu</Text>
                 </Pressable>
                 {openMenuId === room.id && (
                   <View style={styles.popMenu}>
@@ -704,14 +704,15 @@ function StudentJoinPanel({ user, onConnected }) {
   }
 
   async function connectWifiDirectFromQr(payload) {
-    if (Platform.OS !== "android" || !payload.deviceAddress) return null;
+    if (Platform.OS !== "android" || (!payload.deviceAddress && !payload.networkName)) return null;
     setDownloadStep("Finding teacher with Wi-Fi Direct...", 25);
     const discovered = await discoverWifiDirectTeachers().catch(() => ({ ok: false, devices: [] }));
     const teacherDevice = (discovered.devices || []).find(device =>
-      device.deviceAddress === payload.deviceAddress ||
+      (payload.deviceAddress && device.deviceAddress === payload.deviceAddress) ||
       cleanCompare(device.deviceName) === cleanCompare(payload.networkName)
     );
     const deviceAddress = teacherDevice?.deviceAddress || payload.deviceAddress;
+    if (!deviceAddress) throw new Error("Teacher Wi-Fi Direct group was not found. Make sure teacher is hosting and scan again.");
     setDownloadStep("Connecting with Wi-Fi Direct...", 40);
     const connection = await connectToWifiDirectTeacher(deviceAddress);
     return connection.hostUrl || payload.url;
@@ -1057,10 +1058,6 @@ function buildEduMosQrPayload(classroomId, hostAddress, details = {}) {
   ].join("|");
 }
 
-function escapeWifiQrValue(value) {
-  return String(value || "").replace(/([\\;,:"])/g, "\\$1");
-}
-
 function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
@@ -1102,7 +1099,7 @@ function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
               </Pressable>
               <View style={styles.menuWrap}>
                 <Pressable accessibilityRole="button" onPress={() => setOpenMenuId(openMenuId === room.id ? "" : room.id)} style={styles.dotsButton}>
-                  <Text style={styles.dotsText}>...</Text>
+                  <Text style={styles.dotsText}>Menu</Text>
                 </Pressable>
                 {openMenuId === room.id && (
                   <View style={styles.popMenu}>
@@ -1139,11 +1136,12 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   const [queueCount, setQueueCount] = useState(getPendingWriteCount());
   const [hostPage, setHostPage] = useState("menu");
   const [qrPayload, setQrPayload] = useState("");
-  const [wifiQrPayload, setWifiQrPayload] = useState("");
   const [isHosting, setIsHosting] = useState(false);
+  const [participantCount, setParticipantCount] = useState(0);
   const [networkName, setNetworkName] = useState(`EduMos-${classroom.name}`.replace(/\s+/g, "-").slice(0, 28));
   const [networkPassword, setNetworkPassword] = useState("Shown by Android Wi-Fi/Hotspot settings");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
+  const hasStudentConnection = participantCount > 0;
   async function buildQr(hostAddress, details = {}) {
     const qrDetails = {
       deviceAddress: details.deviceAddress || "",
@@ -1151,11 +1149,6 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       networkPassword: details.networkPassword || networkPassword
     };
     setQrPayload(buildEduMosQrPayload(classroom.id, hostAddress, qrDetails));
-    if (qrDetails.networkName && qrDetails.networkPassword && !qrDetails.networkPassword.includes("Shown by Android")) {
-      setWifiQrPayload(`WIFI:T:WPA;S:${escapeWifiQrValue(qrDetails.networkName)};P:${escapeWifiQrValue(qrDetails.networkPassword)};;`);
-    } else {
-      setWifiQrPayload("");
-    }
   }
   async function hostClassroom() {
     setHostPage("host");
@@ -1235,6 +1228,28 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
     setHostMessage(result.pending ? `${result.pending} records still waiting for internet.` : "All offline classroom data is synced.");
     onPendingChange?.();
   }
+  async function refreshConnections() {
+    try {
+      const hostUrl = localHostUrl || getOfflineStore().teacherHostUrls?.[classroom.id];
+      if (hostUrl) {
+        await fetchTeacherHostSnapshot(hostUrl, classroom.id, { queueForSync: true }).catch(() => null);
+      }
+      const participants = await listParticipants(classroom.id);
+      setParticipantCount(participants.length);
+      if (participants.length) {
+        setHostMessage(`${participants.length} student${participants.length === 1 ? "" : "s"} connected. Resources and results are being saved on this teacher device.`);
+      }
+      onPendingChange?.();
+    } catch (error) {
+      setHostMessage(error.message || "Could not refresh connected students yet.");
+    }
+  }
+  useEffect(() => {
+    if (hostPage !== "host" || !isHosting) return undefined;
+    refreshConnections();
+    const timer = setInterval(refreshConnections, 5000);
+    return () => clearInterval(timer);
+  }, [hostPage, isHosting, localHostUrl, classroom.id]);
   function openConnectPage() {
     setHostPage("connect");
     setHostMessage("Open Wi-Fi, connect to EduMos/Wi-Fi Direct/classroom LAN, then return here.");
@@ -1286,8 +1301,10 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       </View>
       {isHosting && (
         <View style={styles.connectionBanner}>
-          <Text style={styles.connectionState}>Connected</Text>
-          <Text style={styles.connectionStateLive}>Live</Text>
+          <Text style={hasStudentConnection ? styles.connectionState : styles.connectionStateWaiting}>
+            {hasStudentConnection ? "Student Connected" : "Group Ready"}
+          </Text>
+          <Text style={styles.connectionStateCount}>{participantCount} joined</Text>
         </View>
       )}
       <Text style={styles.bodyText}>Students scan this QR or use the module name and connection details below to receive classroom resources.</Text>
@@ -1295,20 +1312,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       <View style={styles.modulePanel}>
         <Text style={styles.summaryLabel}>Module Name</Text>
         <Text style={styles.moduleName}>{networkName}</Text>
-        {qrPayload ? (
-          <View style={styles.qrGrid}>
-            <View style={styles.qrBlock}>
-              <Text style={styles.howTitle}>Join Course</Text>
-              <View style={styles.qrImage}><QRCode value={qrPayload} size={230} ecl="L" quietZone={10} /></View>
-            </View>
-            {wifiQrPayload ? (
-              <View style={styles.qrBlock}>
-                <Text style={styles.howTitle}>Connect Wi-Fi</Text>
-                <View style={styles.qrImage}><QRCode value={wifiQrPayload} size={230} ecl="L" quietZone={10} /></View>
-              </View>
-            ) : null}
-          </View>
-        ) : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
+        {qrPayload ? <View style={styles.qrImage}><QRCode value={qrPayload} size={248} ecl="L" quietZone={12} /></View> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
       </View>
       <View style={styles.hostShareBox}>
         <Text style={styles.howTitle}>EduMos URL</Text>
@@ -1324,6 +1328,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       </View>
       <View style={styles.tabs}>
         <Button title="Host" onPress={hostClassroom} />
+        <Button tone="muted" title="Refresh Connections" onPress={refreshConnections} />
         <Button tone="muted" title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
         <Button tone="muted" title="Sync When Online" onPress={sync} />
       </View>
@@ -2113,10 +2118,10 @@ const styles = StyleSheet.create({
   courseRow: { backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, boxShadow: "0 8px 22px rgba(15,23,42,0.07)" },
   courseCardHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   courseNameArea: { flex: 1, minWidth: 0 },
-  menuWrap: { position: "relative", alignItems: "flex-end" },
-  dotsButton: { width: 42, height: 42, borderRadius: 8, backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  dotsText: { color: "#123a5f", fontSize: 24, fontWeight: "900", lineHeight: 28 },
-  popMenu: { position: "absolute", right: 0, top: 46, zIndex: 10, width: 190, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 10, gap: 8, boxShadow: "0 14px 30px rgba(15,23,42,0.16)" },
+  menuWrap: { alignItems: "flex-end", gap: 8 },
+  dotsButton: { minWidth: 78, height: 42, borderRadius: 8, backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  dotsText: { color: "#123a5f", fontSize: 14, fontWeight: "900", lineHeight: 18 },
+  popMenu: { width: 190, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 10, gap: 8, boxShadow: "0 14px 30px rgba(15,23,42,0.16)" },
   card: { backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 22, gap: 12, flexGrow: 1, flexBasis: 260, boxShadow: "0 8px 22px rgba(15,23,42,0.07)" },
   clickableCard: { cursor: "pointer" },
   clickableCardFocus: { borderColor: "#4b5cff", transform: [{ translateY: -2 }], boxShadow: "0 14px 30px rgba(75,92,255,0.16)" },
@@ -2182,12 +2187,12 @@ const styles = StyleSheet.create({
   hostChoice: { flexGrow: 1, flexBasis: 260, backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 20, gap: 10, cursor: "pointer" },
   connectionBanner: { flexDirection: "row", gap: 10, flexWrap: "wrap", alignItems: "center" },
   connectionState: { color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
+  connectionStateWaiting: { color: "#1e3a8a", backgroundColor: "#dbeafe", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
+  connectionStateCount: { color: "#334155", backgroundColor: "#f1f5f9", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   connectionStateLive: { color: "#991b1b", backgroundColor: "#fee2e2", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   connectedTeacherPill: { alignSelf: "flex-start", color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   modulePanel: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 12, alignItems: "center" },
   moduleName: { color: "#0f172a", fontSize: 24, fontWeight: "900", textAlign: "center" },
-  qrGrid: { flexDirection: "row", flexWrap: "wrap", gap: 16, justifyContent: "center", alignItems: "flex-start" },
-  qrBlock: { alignItems: "center", gap: 8 },
   qrImage: { width: 280, height: 280, backgroundColor: "white", borderRadius: 8, alignItems: "center", justifyContent: "center" },
   qrPlaceholder: { width: 260, height: 260, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", padding: 16 },
   modeGrid: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
