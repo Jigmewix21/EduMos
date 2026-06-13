@@ -30,6 +30,16 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function waitForConnectionInfo(p2p, attempts = 8, delayMs = 1500) {
+  let connection = null;
+  for (let index = 0; index < attempts; index += 1) {
+    connection = await p2p.getConnectionInfo().catch(() => null);
+    if (connection?.groupOwnerAddress?.hostAddress) return connection;
+    await delay(delayMs);
+  }
+  return connection;
+}
+
 export function isWifiDirectAvailable() {
   return !!getWifiP2p();
 }
@@ -42,8 +52,7 @@ export async function startTeacherWifiDirectGroup() {
   await p2p.initialize();
   await p2p.removeGroup().catch(() => {});
   await p2p.createGroup();
-  await delay(2500);
-  const connection = await p2p.getConnectionInfo().catch(() => null);
+  const connection = await waitForConnectionInfo(p2p, 8, 1500);
   const group = await p2p.getGroupInfo().catch(() => null);
   const hostAddress = connection?.groupOwnerAddress?.hostAddress || "192.168.49.1";
   return {
@@ -60,8 +69,9 @@ export async function discoverWifiDirectTeachers() {
   const allowed = await requestWifiDirectPermissions();
   if (!allowed) return { ok: false, devices: [], message: "Wi-Fi Direct permissions were denied." };
   await p2p.initialize();
+  await Promise.resolve(p2p.stopDiscoveringPeers?.()).catch(() => {});
   await p2p.startDiscoveringPeers();
-  await delay(3500);
+  await delay(5500);
   const peers = await p2p.getAvailablePeers().catch(() => ({ devices: [] }));
   return { ok: true, devices: peers.devices || [] };
 }
@@ -72,9 +82,14 @@ export async function connectToWifiDirectTeacher(deviceAddress) {
   const allowed = await requestWifiDirectPermissions();
   if (!allowed) throw new Error("Wi-Fi Direct permissions were denied.");
   await p2p.initialize();
+  await Promise.resolve(p2p.stopDiscoveringPeers?.()).catch(() => {});
+  await p2p.startDiscoveringPeers().catch(() => {});
+  await delay(2500);
   await p2p.connectWithConfig({ deviceAddress, groupOwnerIntent: 0 });
-  await delay(3500);
-  const connection = await p2p.getConnectionInfo();
+  const connection = await waitForConnectionInfo(p2p, 10, 1500);
+  if (!connection?.groupOwnerAddress?.hostAddress) {
+    throw new Error("Wi-Fi Direct did not finish connecting. Accept the Android connection prompt and scan again.");
+  }
   const hostAddress = connection?.groupOwnerAddress?.hostAddress || "192.168.49.1";
   return {
     ok: true,

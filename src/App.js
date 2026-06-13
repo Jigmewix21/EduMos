@@ -859,7 +859,7 @@ function StudentJoinPanel({ user, onConnected }) {
       setDownloadStep("QR scanned. Connecting to teacher...", 20);
       setConnectMessage("QR scanned. Connecting to teacher...");
       let teacherUrl = payload.url;
-      if (payload.deviceAddress && Platform.OS === "android") {
+      if ((payload.deviceAddress || payload.networkName) && Platform.OS === "android") {
         try {
           teacherUrl = await connectWifiDirectFromQr(payload) || teacherUrl;
           setHostUrl(teacherUrl);

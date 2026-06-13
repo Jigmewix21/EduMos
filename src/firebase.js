@@ -36,7 +36,7 @@ if (typeof globalThis !== "undefined" && typeof window !== "undefined" && typeof
 const keyOf = (...parts) => parts.join("__");
 const localId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const FIREBASE_TIMEOUT_MS = 10000;
-const LOCAL_HOST_TIMEOUT_MS = 12000;
+const LOCAL_HOST_TIMEOUT_MS = 18000;
 const COMMON_TEACHER_HOSTS = [
   apiBaseUrl,
   "http://192.168.43.1:10000",
@@ -51,6 +51,23 @@ function withTimeout(promise, ms, message) {
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
   ]);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retryLocalRequest(operation, attempts = 4, delayMs = 1800) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await wait(delayMs * attempt);
+    }
+  }
+  throw lastError;
 }
 
 function cacheUser(role, user) {
@@ -617,11 +634,11 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   const cleanUrl = normalizeHostUrl(hostUrl);
   const cleanClassroomId = classroomId.trim();
   if (!cleanUrl || !cleanClassroomId) throw new Error("Enter teacher address and course ID.");
-  const response = await withTimeout(
+  const response = await retryLocalRequest(() => withTimeout(
     fetch(`${cleanUrl}/api/offline/classrooms/${cleanClassroomId}`),
     LOCAL_HOST_TIMEOUT_MS,
-    "Could not reach teacher group. Check that both phones are connected with EduMos Wi-Fi Direct or the same classroom Wi-Fi, and the teacher pressed Host."
-  );
+    "Still waiting for teacher group. Keep both phones on the EduMos Wi-Fi Direct group and do not close the app."
+  ));
   if (!response.ok) throw new Error("Teacher group is not reachable. Check the address and course ID.");
   const payload = await response.json();
   payload.classroom = { ...payload.classroom, teacherHostUrl: cleanUrl };
@@ -629,7 +646,7 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   result.stats = packageStats(payload);
   if (result.ok && result.participant) {
     try {
-      await submitParticipantToTeacherHost(cleanUrl, result.classroom.id, result.participant);
+      await retryLocalRequest(() => submitParticipantToTeacherHost(cleanUrl, result.classroom.id, result.participant), 3, 1200);
       result.teacherSaved = true;
     } catch (error) {
       result.teacherSaved = false;
@@ -657,7 +674,7 @@ export async function scanTeacherHosts(classroomId = "", extraHosts = []) {
       }
       const response = await withTimeout(
         fetch(`${host}/api/offline/classrooms`),
-        3500,
+        6000,
         "Teacher host scan timed out"
       );
       if (!response.ok) return;
@@ -722,11 +739,11 @@ export async function fetchTeacherHostSnapshot(hostUrl, classroomId, options = {
 
 async function fetchClassroomPackage(hostUrl, classroomId, timeoutMessage = "Could not reach teacher group") {
   const cleanUrl = normalizeHostUrl(hostUrl);
-  const response = await withTimeout(
+  const response = await retryLocalRequest(() => withTimeout(
     fetch(`${cleanUrl}/api/offline/classrooms/${classroomId}`),
     LOCAL_HOST_TIMEOUT_MS,
     timeoutMessage
-  );
+  ));
   if (!response.ok) throw new Error("Teacher group is not reachable");
   return response.json();
 }
