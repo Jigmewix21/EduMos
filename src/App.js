@@ -702,6 +702,23 @@ function StudentJoinPanel({ user, onConnected }) {
     return stats;
   }
 
+  async function joinTeacherCourse(teacherUrl, classroomId, openingMessage = "Connected to teacher. Receiving classroom resources...") {
+    setHostUrl(teacherUrl);
+    setHostClassroomId(classroomId);
+    setDownloadStep(openingMessage, 55);
+    const result = await connectToTeacherHost(teacherUrl, classroomId, user);
+    if (result.ok) {
+      setDownloadStep("Saving course for offline use...", 85);
+      const stats = completeDownload(result);
+      setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. Opening module...`);
+      onConnected(result.classroom);
+      return result;
+    }
+    setDownloadStep("Download stopped. Check connection and try again.", 0);
+    setConnectMessage(result.message);
+    return result;
+  }
+
   async function scanForHosts() {
     setScanning(true);
     setNearbyPackages([]);
@@ -747,15 +764,7 @@ function StudentJoinPanel({ user, onConnected }) {
         classroomId = hosted[0]?.classroom?.id || "";
       }
       setDownloadStep("Saving course for offline use...", 85);
-      const result = await connectToTeacherHost(connection.hostUrl, classroomId, user);
-      if (result.ok) {
-        const stats = completeDownload(result);
-        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
-        onConnected(result.classroom);
-      } else {
-        setDownloadStep("Download stopped. Check connection and try again.", 0);
-        setConnectMessage(result.message);
-      }
+      await joinTeacherCourse(connection.hostUrl, classroomId);
     } catch (error) {
       setDownloadStep("Download stopped. Check connection and try again.", 0);
       setConnectMessage(error.message || "Could not connect with Wi-Fi Direct.");
@@ -766,18 +775,10 @@ function StudentJoinPanel({ user, onConnected }) {
     try {
       setDownloadStep("Connecting to teacher group...", 15);
       setConnectMessage("Contacting teacher group...");
-      setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
-      const result = await connectToTeacherHost(hostUrl, hostClassroomId, user);
-      if (result.ok) {
-        setDownloadStep("Saving course for offline use...", 85);
-        const stats = completeDownload(result);
-        const saveStatus = result.teacherSaved ? "Teacher participant list updated." : "Course saved here; teacher list will update when the teacher host is reachable.";
-        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. ${saveStatus}`);
-      } else {
-        setDownloadStep("Download stopped. Check connection and try again.", 0);
-        setConnectMessage(result.message);
+      const result = await joinTeacherCourse(hostUrl, hostClassroomId);
+      if (result.ok && !result.teacherSaved) {
+        setConnectMessage(`Joined ${result.classroom.name}. Course saved here; teacher list will update when the teacher host is reachable. Opening module...`);
       }
-      if (result.ok) onConnected(result.classroom);
     } catch (error) {
       setDownloadStep("Download stopped. Check connection and try again.", 0);
       setConnectMessage(error.message);
@@ -826,8 +827,8 @@ function StudentJoinPanel({ user, onConnected }) {
     if (!scannerOpen) return;
     setScannerOpen(false);
     try {
-      const payload = JSON.parse(event.data || event.nativeEvent?.data || "");
-      if (payload.type !== "edumos-classroom" || !payload.url || !payload.classroomId) {
+      const payload = parseEduMosQr(event.data || event.nativeEvent?.data || "");
+      if (!payload || !payload.url || !payload.classroomId) {
         setConnectMessage("This QR is not an EduMos classroom QR.");
         return;
       }
@@ -846,16 +847,7 @@ function StudentJoinPanel({ user, onConnected }) {
         }
       }
       setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
-      const result = await connectToTeacherHost(teacherUrl, payload.classroomId, user);
-      if (result.ok) {
-        setDownloadStep("Saving course for offline use...", 85);
-        const stats = completeDownload(result);
-        setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
-        onConnected(result.classroom);
-      } else {
-        setDownloadStep("Download stopped. Check connection and try again.", 0);
-        setConnectMessage(result.message);
-      }
+      await joinTeacherCourse(teacherUrl, payload.classroomId);
     } catch (_error) {
       setDownloadStep("Download stopped. Scan the QR again.", 0);
       setConnectMessage("Could not read this QR. Ask teacher to show the EduMos QR again.");
@@ -872,7 +864,9 @@ function StudentJoinPanel({ user, onConnected }) {
             style={styles.cameraPreview}
             facing="back"
             barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            barcodeScannerEnabled={scannerOpen}
             onBarcodeScanned={handleQrScanned}
+            onMountError={() => setConnectMessage("Camera could not open. Allow camera permission and try Scan Teacher QR again.")}
           />
           <Button tone="muted" title="Close Scanner" onPress={() => setScannerOpen(false)} />
         </View>
@@ -928,12 +922,7 @@ function StudentJoinPanel({ user, onConnected }) {
                 setHostClassroomId(item.classroom.id);
                 setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
                 setConnectMessage("Joining teacher course...");
-                connectToTeacherHost(item.hostUrl, item.classroom.id, user).then(result => {
-                  const stats = result.ok ? completeDownload(result) : (result.stats || { resources: 0, quizzes: 0, sections: 0 });
-                  if (!result.ok) setDownloadStep("Download stopped. Check connection and try again.", 0);
-                  setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.` : result.message);
-                  if (result.ok) onConnected(result.classroom);
-                }).catch(error => {
+                joinTeacherCourse(item.hostUrl, item.classroom.id).catch(error => {
                   setDownloadStep("Download stopped. Check connection and try again.", 0);
                   setConnectMessage(error.message);
                 });
@@ -972,6 +961,38 @@ function countPackageItems(payload) {
     resources: sections.reduce((total, section) => total + (section.resources || []).length, 0),
     quizzes: sections.reduce((total, section) => total + (section.quizzes || []).length, 0)
   };
+}
+
+function parseEduMosQr(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return null;
+  if (value.startsWith("EDUMOS|")) {
+    const [, classroomId, url, deviceAddress = ""] = value.split("|");
+    return { classroomId, url, deviceAddress };
+  }
+  if (value.startsWith("edumos://join")) {
+    try {
+      const parsed = new URL(value);
+      return {
+        classroomId: parsed.searchParams.get("c") || "",
+        url: parsed.searchParams.get("u") || "",
+        deviceAddress: parsed.searchParams.get("d") || ""
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+  try {
+    const payload = JSON.parse(value);
+    if (payload.type !== "edumos-classroom") return null;
+    return {
+      classroomId: payload.classroomId || "",
+      url: payload.url || "",
+      deviceAddress: payload.deviceAddress || ""
+    };
+  } catch (_error) {
+    return null;
+  }
 }
 
 function TeacherDashboard({ user, classrooms, onCreated, onOpen }) {
@@ -1057,16 +1078,8 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   const [networkPassword, setNetworkPassword] = useState("Shown by Android Wi-Fi/Hotspot settings");
   const defaultHost = "http://YOUR-HOTSPOT-IP:10000";
   async function buildQr(hostAddress, details = {}) {
-    const payload = {
-      type: "edumos-classroom",
-      classroomId: classroom.id,
-      classroomName: classroom.name,
-      url: hostAddress,
-      networkName: details.networkName || networkName,
-      deviceAddress: details.deviceAddress || "",
-      password: details.networkPassword || networkPassword
-    };
-    setQrPayload(JSON.stringify(payload));
+    const deviceAddress = details.deviceAddress || "";
+    setQrPayload(`EDUMOS|${classroom.id}|${hostAddress}|${deviceAddress}`);
   }
   async function hostClassroom() {
     setHostPage("host");
@@ -1206,7 +1219,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       <View style={styles.modulePanel}>
         <Text style={styles.summaryLabel}>Module Name</Text>
         <Text style={styles.moduleName}>{networkName}</Text>
-        {qrPayload ? <View style={styles.qrImage}><QRCode value={qrPayload} size={236} /></View> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
+        {qrPayload ? <View style={styles.qrImage}><QRCode value={qrPayload} size={248} ecl="L" quietZone={12} /></View> : <View style={styles.qrPlaceholder}><Text style={styles.bodyText}>QR appears after Host starts.</Text></View>}
       </View>
       <View style={styles.hostShareBox}>
         <Text style={styles.howTitle}>EduMos URL</Text>
@@ -2084,7 +2097,7 @@ const styles = StyleSheet.create({
   connectedTeacherPill: { alignSelf: "flex-start", color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   modulePanel: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 12, alignItems: "center" },
   moduleName: { color: "#0f172a", fontSize: 24, fontWeight: "900", textAlign: "center" },
-  qrImage: { width: 260, height: 260, backgroundColor: "white", borderRadius: 8 },
+  qrImage: { width: 280, height: 280, backgroundColor: "white", borderRadius: 8, alignItems: "center", justifyContent: "center" },
   qrPlaceholder: { width: 260, height: 260, backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", padding: 16 },
   modeGrid: { flexDirection: "row", gap: 12, flexWrap: "wrap" },
   modeCard: { flexGrow: 1, flexBasis: 260, backgroundColor: "#ffffff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 16, gap: 8 },
