@@ -247,19 +247,17 @@ export default function App() {
     navigate("home", { replace: true });
   }
 
-  function createLocalStudentProfile(name, profileEmail, profilePassword) {
+  function createLocalStudentProfile(name, profileEmail) {
     const cleanName = name.trim();
     const cleanEmail = profileEmail.trim().toLowerCase();
-    const cleanPassword = profilePassword.trim();
-    if (!cleanName || !cleanEmail || !cleanPassword) {
-      setMessage("Add your name, education email, and password first.");
+    if (!cleanName || !cleanEmail) {
+      setMessage("Add your name and education email first.");
       return;
     }
     const student = {
       id: `student_${cleanEmail.replace(/[^a-z0-9]/g, "_")}`,
       name: cleanName,
       email: cleanEmail,
-      password: cleanPassword,
       role: "student",
       localOnly: true,
       createdAt: Date.now()
@@ -277,7 +275,7 @@ export default function App() {
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={[styles.content, compact && styles.contentCompact]}>
-      <Header compact={compact} onHome={() => navigate("home")} onAbout={() => navigate("about")} onLogout={user ? logout : null} online={online} pendingWrites={pendingWrites} onSync={syncNow} showStatus={role !== "teacher"} />
+      <Header compact={compact} onHome={() => navigate("home")} onAbout={() => navigate("about")} onLogout={user ? logout : null} online={online} pendingWrites={pendingWrites} onSync={syncNow} showStatus={false} />
       {screen === "home" && <Home compact={compact} setScreen={navigate} setRole={setRole} setEmail={setEmail} setPassword={setPassword} />}
       {screen === "about" && <About />}
       {screen === "studentSetup" && <StudentSetup onCreate={createLocalStudentProfile} message={message} />}
@@ -556,13 +554,11 @@ function AuthShell({ title, subtitle, children }) {
 function StudentSetup({ onCreate, message }) {
   const [name, setName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
-  const [profilePassword, setProfilePassword] = useState("");
   return (
-    <AuthShell title="Student Profile" subtitle="This profile is free and works without internet. Your downloaded classroom resources stay saved on this device.">
+    <AuthShell title="Student Profile" subtitle="Create your offline profile with your name and education email. Downloaded classroom resources stay saved on this device.">
       <Input value={name} onChangeText={setName} placeholder="Student Name" />
-      <Input value={profileEmail} onChangeText={setProfileEmail} placeholder="Education Email" keyboardType="email-address" autoCapitalize="none" />
-      <Input value={profilePassword} onChangeText={setProfilePassword} placeholder="Password" secureTextEntry onSubmitEditing={() => onCreate(name, profileEmail, profilePassword)} />
-      <Button title="Continue Offline" onPress={() => onCreate(name, profileEmail, profilePassword)} />
+      <Input value={profileEmail} onChangeText={setProfileEmail} placeholder="Education Email" keyboardType="email-address" autoCapitalize="none" onSubmitEditing={() => onCreate(name, profileEmail)} />
+      <Button title="Continue Offline" onPress={() => onCreate(name, profileEmail)} />
       {!!message && <Text style={styles.error}>{message}</Text>}
     </AuthShell>
   );
@@ -687,11 +683,24 @@ function StudentJoinPanel({ user, onConnected }) {
   const [hostClassroomId, setHostClassroomId] = useState("");
   const [packageText, setPackageText] = useState("");
   const [connectMessage, setConnectMessage] = useState("");
+  const [downloadStatus, setDownloadStatus] = useState("");
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [nearbyPackages, setNearbyPackages] = useState([]);
   const [wifiDirectDevices, setWifiDirectDevices] = useState([]);
+
+  function setDownloadStep(status, progress) {
+    setDownloadStatus(status);
+    setDownloadProgress(progress);
+  }
+
+  function completeDownload(result, fallbackStats) {
+    const stats = result.stats || fallbackStats || { sections: 0, resources: 0, quizzes: 0 };
+    setDownloadStep(`Saved locally: ${stats.sections} sections, ${stats.resources} resources, ${stats.quizzes} quizzes.`, 100);
+    return stats;
+  }
 
   async function scanForHosts() {
     setScanning(true);
@@ -726,58 +735,73 @@ function StudentJoinPanel({ user, onConnected }) {
 
   async function connectWifiDirectDevice(device) {
     try {
+      setDownloadStep("Connecting to teacher device...", 15);
       setConnectMessage(`Connecting to ${device.deviceName || "teacher"} with Wi-Fi Direct...`);
       const connection = await connectToWifiDirectTeacher(device.deviceAddress);
       setHostUrl(connection.hostUrl);
+      setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
       setConnectMessage(`Connected to teacher device. Downloading course from ${connection.hostUrl}...`);
       let classroomId = hostClassroomId.trim();
       if (!classroomId) {
         const hosted = await scanTeacherHosts("", [connection.hostUrl]);
         classroomId = hosted[0]?.classroom?.id || "";
       }
+      setDownloadStep("Saving course for offline use...", 85);
       const result = await connectToTeacherHost(connection.hostUrl, classroomId, user);
       if (result.ok) {
-        const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+        const stats = completeDownload(result);
         setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
         onConnected(result.classroom);
       } else {
+        setDownloadStep("Download stopped. Check connection and try again.", 0);
         setConnectMessage(result.message);
       }
     } catch (error) {
+      setDownloadStep("Download stopped. Check connection and try again.", 0);
       setConnectMessage(error.message || "Could not connect with Wi-Fi Direct.");
     }
   }
 
   async function connectByHost() {
     try {
+      setDownloadStep("Connecting to teacher group...", 15);
       setConnectMessage("Contacting teacher group...");
+      setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
       const result = await connectToTeacherHost(hostUrl, hostClassroomId, user);
       if (result.ok) {
-        const stats = result.stats || { sections: 0, resources: 0, quizzes: 0 };
+        setDownloadStep("Saving course for offline use...", 85);
+        const stats = completeDownload(result);
         const saveStatus = result.teacherSaved ? "Teacher participant list updated." : "Course saved here; teacher list will update when the teacher host is reachable.";
         setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. ${saveStatus}`);
       } else {
+        setDownloadStep("Download stopped. Check connection and try again.", 0);
         setConnectMessage(result.message);
       }
       if (result.ok) onConnected(result.classroom);
     } catch (error) {
+      setDownloadStep("Download stopped. Check connection and try again.", 0);
       setConnectMessage(error.message);
     }
   }
 
   function importPackageText(text = packageText) {
     try {
+      setDownloadStep("Reading teacher package...", 35);
       setConnectMessage("Joining course from package...");
       const payload = JSON.parse(text);
+      setDownloadStep("Saving course for offline use...", 85);
       const result = importClassroomOfflinePackage(payload, user);
       if (result.ok) {
         const stats = countPackageItems(payload);
+        completeDownload(result, stats);
         setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources and ${stats.quizzes} quizzes. Opening course...`);
       } else {
+        setDownloadStep("Download stopped. Check package and try again.", 0);
         setConnectMessage(result.message);
       }
       if (result.ok) onConnected(result.classroom);
     } catch (_error) {
+      setDownloadStep("Download stopped. Check package and try again.", 0);
       setConnectMessage("Paste the classroom package JSON from the teacher.");
     }
   }
@@ -809,16 +833,31 @@ function StudentJoinPanel({ user, onConnected }) {
       }
       setHostUrl(payload.url);
       setHostClassroomId(payload.classroomId);
-      setConnectMessage("QR scanned. Joining teacher course...");
-      const result = await connectToTeacherHost(payload.url, payload.classroomId, user);
+      setDownloadStep("QR scanned. Connecting to teacher...", 20);
+      setConnectMessage("QR scanned. Connecting to teacher...");
+      let teacherUrl = payload.url;
+      if (payload.deviceAddress && Platform.OS === "android") {
+        try {
+          const connection = await connectToWifiDirectTeacher(payload.deviceAddress);
+          teacherUrl = connection.hostUrl || teacherUrl;
+          setHostUrl(teacherUrl);
+        } catch (_error) {
+          setConnectMessage("QR read. Wi-Fi Direct prompt did not complete, trying teacher URL...");
+        }
+      }
+      setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
+      const result = await connectToTeacherHost(teacherUrl, payload.classroomId, user);
       if (result.ok) {
-        const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+        setDownloadStep("Saving course for offline use...", 85);
+        const stats = completeDownload(result);
         setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.`);
         onConnected(result.classroom);
       } else {
+        setDownloadStep("Download stopped. Check connection and try again.", 0);
         setConnectMessage(result.message);
       }
     } catch (_error) {
+      setDownloadStep("Download stopped. Scan the QR again.", 0);
       setConnectMessage("Could not read this QR. Ask teacher to show the EduMos QR again.");
     }
   }
@@ -846,9 +885,17 @@ function StudentJoinPanel({ user, onConnected }) {
         </View>
         <View style={styles.joinCopy}>
           <Text style={styles.howTitle}>{scanning ? "Looking For Teacher..." : "Ready To Join"}</Text>
-          <Text style={styles.bodyText}>Use scan for preview, or enter the teacher address when you are connected to their hotspot.</Text>
+          <Text style={styles.bodyText}>Scan the teacher QR or nearby EduMos device. Resources save on this phone for offline use.</Text>
         </View>
       </View>
+      {!!downloadStatus && (
+        <View style={styles.downloadPanel}>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${downloadProgress}%` }]} />
+          </View>
+          <Text style={styles.progressText}>{downloadProgress}% - {downloadStatus}</Text>
+        </View>
+      )}
       <View style={styles.tabs}>
         <Button title="Scan Teacher QR" onPress={openQrScanner} />
         <Button tone="muted" title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
@@ -879,12 +926,17 @@ function StudentJoinPanel({ user, onConnected }) {
                 }
                 setHostUrl(item.hostUrl);
                 setHostClassroomId(item.classroom.id);
+                setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
                 setConnectMessage("Joining teacher course...");
                 connectToTeacherHost(item.hostUrl, item.classroom.id, user).then(result => {
-                  const stats = result.stats || { resources: 0, quizzes: 0, sections: 0 };
+                  const stats = result.ok ? completeDownload(result) : (result.stats || { resources: 0, quizzes: 0, sections: 0 });
+                  if (!result.ok) setDownloadStep("Download stopped. Check connection and try again.", 0);
                   setConnectMessage(result.ok ? `Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections.` : result.message);
                   if (result.ok) onConnected(result.classroom);
-                }).catch(error => setConnectMessage(error.message));
+                }).catch(error => {
+                  setDownloadStep("Download stopped. Check connection and try again.", 0);
+                  setConnectMessage(error.message);
+                });
               }} />
             </Card>
           ))}
@@ -895,12 +947,6 @@ function StudentJoinPanel({ user, onConnected }) {
         <Input value={hostUrl} onChangeText={setHostUrl} placeholder="Teacher address, example http://192.168.43.1:10000" />
         <Input value={hostClassroomId} onChangeText={setHostClassroomId} placeholder="Course ID shown by teacher" onSubmitEditing={connectByHost} />
         <Button title="Join Course" onPress={connectByHost} />
-      </View>
-      <View style={styles.manualJoin}>
-        <Text style={styles.howTitle}>No Hotspot Server?</Text>
-        <Text style={styles.bodyText}>Ask the teacher to share the offline package, paste it here, then import.</Text>
-        <Input value={packageText} onChangeText={setPackageText} placeholder="Paste teacher offline package" multiline />
-        <Button tone="muted" title="Import Package" onPress={() => importPackageText()} />
       </View>
       {!!connectMessage && <Text style={styles.noticeText}>{connectMessage}</Text>}
     </Card>
@@ -1017,6 +1063,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       classroomName: classroom.name,
       url: hostAddress,
       networkName: details.networkName || networkName,
+      deviceAddress: details.deviceAddress || "",
       password: details.networkPassword || networkPassword
     };
     setQrPayload(JSON.stringify(payload));
@@ -1034,6 +1081,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
         let p2pHostUrl = "";
         let qrNetworkName = networkName;
         let qrNetworkPassword = networkPassword;
+        let qrDeviceAddress = "";
         if (isWifiDirectAvailable()) {
           setHostMessage("Creating Wi-Fi Direct teacher group...");
           const p2pGroup = await startTeacherWifiDirectGroup();
@@ -1041,6 +1089,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             p2pHostUrl = p2pGroup.hostUrl;
             qrNetworkName = p2pGroup.group?.networkName || qrNetworkName;
             qrNetworkPassword = p2pGroup.group?.passphrase || qrNetworkPassword;
+            qrDeviceAddress = p2pGroup.group?.owner?.deviceAddress || "";
             setNetworkName(qrNetworkName);
             setNetworkPassword(qrNetworkPassword);
           }
@@ -1053,7 +1102,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             ...store,
             teacherHostUrls: { ...(store.teacherHostUrls || {}), [classroom.id]: hostAddress }
           }));
-          await buildQr(hostAddress, { networkName: qrNetworkName, networkPassword: qrNetworkPassword });
+          await buildQr(hostAddress, { networkName: qrNetworkName, networkPassword: qrNetworkPassword, deviceAddress: qrDeviceAddress });
           setIsHosting(true);
           setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
           setQueueCount(getPendingWriteCount());
@@ -1062,7 +1111,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
         }
       } catch (error) {
         setIsHosting(false);
-        setHostMessage(`Could not start phone hotspot server: ${error.message}. You can still use a local backend URL if one is running.`);
+        setHostMessage(`Could not start EduMos host: ${error.message}. You can still use a local backend URL if one is running.`);
       }
     }
 
@@ -1130,7 +1179,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
           <Title>Connect LAN/EduMos Device</Title>
           <Button tone="muted" title="Back" onPress={() => setHostPage("menu")} />
         </View>
-        <Text style={styles.bodyText}>Connect this teacher phone to an EduMos Wi-Fi Direct group or classroom LAN. After connection, the Host page will show Connected and Live details.</Text>
+        <Text style={styles.bodyText}>Connect this teacher phone to an EduMos Wi-Fi Direct group or classroom LAN. After connection, the Host page will show the active host details.</Text>
         <View style={styles.hostChoiceGrid}>
           <Button title="Open Wi-Fi" onPress={() => openDeviceSetting("android.settings.WIFI_SETTINGS")} />
           <Button tone="muted" title="Open Hotspot/Wi-Fi Direct Settings" onPress={() => openDeviceSetting("android.settings.TETHER_SETTINGS")} />
@@ -1262,9 +1311,8 @@ function StudentClassroom({ classroom, tab, setTab, user }) {
   return (
     <View>
       <Title>{classroom.name}</Title>
-      <Tabs tab={tab} setTab={setTab} tabs={["resources", "live", "grades"]} />
-      {tab === "resources" && <StudentResources classroom={classroom} user={user} />}
-      {tab === "live" && <StudentLiveQuiz classroom={classroom} user={user} />}
+      <Tabs tab={tab === "live" ? "resources" : tab} setTab={setTab} tabs={["resources", "grades"]} />
+      {(tab === "resources" || tab === "live") && <StudentResources classroom={classroom} user={user} />}
       {tab === "grades" && <Grades classroom={classroom} student={user} />}
     </View>
   );
@@ -1561,6 +1609,7 @@ function StudentResources({ classroom, user }) {
       <Card tone="soft">
         <Title>Course Files</Title>
         <Text style={styles.bodyText}>Resources and quizzes saved here work offline after download.</Text>
+        {!!classroom.teacherHostUrl && <Text style={styles.connectedTeacherPill}>Connected to teacher</Text>}
         <Button tone="muted" title="Refresh From Teacher" onPress={refreshFromTeacher} />
         {!!message && <Text style={styles.noticeText}>{message}</Text>}
       </Card>
@@ -2017,6 +2066,10 @@ const styles = StyleSheet.create({
   scannerBox: { backgroundColor: "#0f172a", borderRadius: 8, padding: 12, gap: 12 },
   cameraPreview: { width: "100%", height: 360, borderRadius: 8, overflow: "hidden" },
   joinCopy: { flex: 1, minWidth: 220 },
+  downloadPanel: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 14, gap: 8 },
+  progressTrack: { height: 12, backgroundColor: "#dbeafe", borderRadius: 999, overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: "#2563eb", borderRadius: 999 },
+  progressText: { color: "#0f172a", fontWeight: "800" },
   radar: { width: 132, height: 132, borderRadius: 66, backgroundColor: "#eef5ff", alignItems: "center", justifyContent: "center", position: "relative", borderColor: "#c7d2fe", borderWidth: 1 },
   radarActive: { backgroundColor: "#ecfdf5", borderColor: "#2ecc71" },
   radarRingLarge: { position: "absolute", width: 104, height: 104, borderRadius: 52, borderColor: "#4b5cff", borderWidth: 2, opacity: 0.32 },
@@ -2028,6 +2081,7 @@ const styles = StyleSheet.create({
   connectionBanner: { flexDirection: "row", gap: 10, flexWrap: "wrap", alignItems: "center" },
   connectionState: { color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   connectionStateLive: { color: "#991b1b", backgroundColor: "#fee2e2", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
+  connectedTeacherPill: { alignSelf: "flex-start", color: "#166534", backgroundColor: "#dcfce7", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontWeight: "900", overflow: "hidden" },
   modulePanel: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 12, alignItems: "center" },
   moduleName: { color: "#0f172a", fontSize: 24, fontWeight: "900", textAlign: "center" },
   qrImage: { width: 260, height: 260, backgroundColor: "white", borderRadius: 8 },

@@ -620,7 +620,7 @@ export async function connectToTeacherHost(hostUrl, classroomId, student) {
   const response = await withTimeout(
     fetch(`${cleanUrl}/api/offline/classrooms/${cleanClassroomId}`),
     LOCAL_HOST_TIMEOUT_MS,
-    "Could not reach teacher group. Check that both phones are on the same hotspot and the teacher pressed Host Group."
+    "Could not reach teacher group. Check that both phones are connected with EduMos Wi-Fi Direct or the same classroom Wi-Fi, and the teacher pressed Host."
   );
   if (!response.ok) throw new Error("Teacher group is not reachable. Check the address and course ID.");
   const payload = await response.json();
