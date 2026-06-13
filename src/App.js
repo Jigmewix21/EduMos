@@ -60,7 +60,7 @@ import {
   updateQuiz
 } from "./firebase";
 import { getOfflineStore, getPendingWriteCount, isOnline, listenForOnline, setOfflineStore } from "./offlineStore";
-import { isLanServerAvailable, startLanServer } from "../modules/edumos-lan-server/src";
+import { connectToWifiNetwork, isLanServerAvailable, startLanServer } from "../modules/edumos-lan-server/src";
 import { connectToWifiDirectTeacher, discoverWifiDirectTeachers, isWifiDirectAvailable, startTeacherWifiDirectGroup } from "./wifiDirect";
 
 const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
@@ -719,20 +719,37 @@ function StudentJoinPanel({ user, onConnected }) {
   }
 
   async function joinTeacherCourse(teacherUrl, classroomId, openingMessage = "Connected to teacher. Receiving classroom resources...") {
-    setHostUrl(teacherUrl);
     setHostClassroomId(classroomId);
     setDownloadStep(openingMessage, 55);
-    const result = await connectToTeacherHost(teacherUrl, classroomId, user);
-    if (result.ok) {
-      setDownloadStep("Saving course for offline use...", 85);
-      const stats = completeDownload(result);
-      setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. Opening module...`);
-      onConnected(result.classroom);
-      return result;
+    const candidates = Array.from(new Set([
+      teacherUrl,
+      "http://192.168.49.1:10000",
+      "http://192.168.43.1:10000",
+      "http://172.20.10.1:10000"
+    ].filter(Boolean)));
+    let lastResult = null;
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        setHostUrl(candidate);
+        setConnectMessage(`Checking teacher module at ${candidate}...`);
+        const result = await connectToTeacherHost(candidate, classroomId, user);
+        if (result.ok) {
+          setDownloadStep("Saving course for offline use...", 85);
+          const stats = completeDownload(result);
+          setConnectMessage(`Joined ${result.classroom.name}. Downloaded ${stats.resources} resources, ${stats.quizzes} quizzes, ${stats.sections} sections. Opening module...`);
+          onConnected(result.classroom);
+          return result;
+        }
+        lastResult = result;
+      } catch (error) {
+        lastError = error;
+      }
     }
     setDownloadStep("Download stopped. Check connection and try again.", 0);
-    setConnectMessage(result.message);
-    return result;
+    const message = lastResult?.message || lastError?.message || "Could not reach teacher group. Keep both phones connected and scan again.";
+    setConnectMessage(message);
+    return lastResult || { ok: false, message };
   }
 
   async function scanForHosts() {
@@ -868,7 +885,11 @@ function StudentJoinPanel({ user, onConnected }) {
             ? `QR read. Connect to ${payload.networkName}${payload.networkPassword ? ` with password ${payload.networkPassword}` : ""}, then scan again or press Join Course.`
             : "QR read. Wi-Fi Direct prompt did not complete, trying teacher URL...";
           setConnectMessage(fallback);
-          if (payload.networkName) openDeviceSetting("android.settings.WIFI_SETTINGS");
+          if (payload.networkName && payload.networkPassword) {
+            await connectToWifiNetwork(payload.networkName, payload.networkPassword).catch(() => openDeviceSetting("android.settings.WIFI_SETTINGS"));
+          } else if (payload.networkName) {
+            openDeviceSetting("android.settings.WIFI_SETTINGS");
+          }
         }
       }
       setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);

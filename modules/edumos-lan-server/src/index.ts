@@ -13,6 +13,7 @@ type LanServerModule = {
   stopServer(): Promise<{ ok: boolean }>;
   isRunning(): boolean;
   getBaseUrl(): string;
+  connectToWifiNetwork(ssid: string, password: string): Promise<{ ok: boolean; message?: string }>;
 };
 
 let nativeModule: LanServerModule | null = null;
@@ -47,4 +48,9 @@ export function getLanServerBaseUrl() {
 
 export function isLanServerRunning() {
   return nativeModule?.isRunning() || false;
+}
+
+export async function connectToWifiNetwork(ssid: string, password: string) {
+  if (!nativeModule) return { ok: false, message: "Wi-Fi connection prompt is available only in the Android APK." };
+  return nativeModule.connectToWifiNetwork(ssid, password);
 }

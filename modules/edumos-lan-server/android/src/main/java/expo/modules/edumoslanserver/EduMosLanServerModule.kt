@@ -1,6 +1,12 @@
 package expo.modules.edumoslanserver
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiNetworkSpecifier
+import android.os.Build
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -25,6 +31,7 @@ class EduMosLanServerModule : Module() {
   private var serverThread: Thread? = null
   private var port: Int = 10000
   private var packageJson = JSONObject()
+  private var wifiCallback: ConnectivityManager.NetworkCallback? = null
 
   override fun definition() = ModuleDefinition {
     Name("EduMosLanServer")
@@ -67,6 +74,50 @@ class EduMosLanServerModule : Module() {
     Function("getBaseUrl") {
       val address = getWifiAddresses().firstOrNull() ?: "0.0.0.0"
       if (running.get()) "http://$address:$port" else ""
+    }
+
+    AsyncFunction("connectToWifiNetwork") { ssid: String, password: String, promise: Promise ->
+      try {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+          promise.resolve(mapOf("ok" to false, "message" to "Android 10 or newer is needed for app-guided Wi-Fi connection."))
+          return@AsyncFunction
+        }
+        val context = appContext.reactContext ?: throw IllegalStateException("React context is not ready")
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        wifiCallback?.let { existing ->
+          try {
+            connectivityManager.unregisterNetworkCallback(existing)
+          } catch (_error: Exception) {}
+        }
+        val specifierBuilder = WifiNetworkSpecifier.Builder().setSsid(ssid)
+        if (password.isNotBlank()) {
+          specifierBuilder.setWpa2Passphrase(password)
+        }
+        val request = NetworkRequest.Builder()
+          .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+          .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+          .setNetworkSpecifier(specifierBuilder.build())
+          .build()
+        var settled = false
+        val callback = object : ConnectivityManager.NetworkCallback() {
+          override fun onAvailable(network: Network) {
+            if (settled) return
+            settled = true
+            connectivityManager.bindProcessToNetwork(network)
+            promise.resolve(mapOf("ok" to true, "message" to "Connected to $ssid"))
+          }
+
+          override fun onUnavailable() {
+            if (settled) return
+            settled = true
+            promise.resolve(mapOf("ok" to false, "message" to "Could not connect to $ssid"))
+          }
+        }
+        wifiCallback = callback
+        connectivityManager.requestNetwork(request, callback, 30000)
+      } catch (error: Exception) {
+        promise.resolve(mapOf("ok" to false, "message" to (error.message ?: "Could not open Wi-Fi connection prompt")))
+      }
     }
   }
 
