@@ -6,7 +6,10 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -32,6 +35,7 @@ class EduMosLanServerModule : Module() {
   private var port: Int = 10000
   private var packageJson = JSONObject()
   private var wifiCallback: ConnectivityManager.NetworkCallback? = null
+  private var hotspotReservation: WifiManager.LocalOnlyHotspotReservation? = null
 
   override fun definition() = ModuleDefinition {
     Name("EduMosLanServer")
@@ -64,6 +68,47 @@ class EduMosLanServerModule : Module() {
 
     AsyncFunction("stopServer") { promise: Promise ->
       stopServerInternal()
+      promise.resolve(mapOf("ok" to true))
+    }
+
+    AsyncFunction("startLocalHotspot") { promise: Promise ->
+      try {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+          promise.resolve(mapOf("ok" to false, "message" to "Android 8 or newer is needed for automatic local hotspot."))
+          return@AsyncFunction
+        }
+        val context = appContext.reactContext ?: throw IllegalStateException("React context is not ready")
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        hotspotReservation?.close()
+        hotspotReservation = null
+        wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+          override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
+            hotspotReservation = reservation
+            val config = reservation.wifiConfiguration
+            promise.resolve(mapOf(
+              "ok" to true,
+              "ssid" to (config?.SSID ?: ""),
+              "password" to (config?.preSharedKey ?: "")
+            ))
+          }
+
+          override fun onStopped() {
+            hotspotReservation = null
+          }
+
+          override fun onFailed(reason: Int) {
+            hotspotReservation = null
+            promise.resolve(mapOf("ok" to false, "message" to "Local hotspot could not start. Android reason: $reason"))
+          }
+        }, Handler(Looper.getMainLooper()))
+      } catch (error: Exception) {
+        promise.resolve(mapOf("ok" to false, "message" to (error.message ?: "Could not start local hotspot")))
+      }
+    }
+
+    AsyncFunction("stopLocalHotspot") { promise: Promise ->
+      hotspotReservation?.close()
+      hotspotReservation = null
       promise.resolve(mapOf("ok" to true))
     }
 
@@ -195,11 +240,14 @@ class EduMosLanServerModule : Module() {
       method == "POST" && path == "/api/offline/classrooms/$classroomId/participants" -> {
         val participant = JSONObject(body)
         val participants = packageJson.optJSONArray("participants") ?: JSONArray()
-        removeById(participants, participant.optString("studentId", participant.optString("id")))
+        removeParticipantDuplicate(participants, participant)
         participants.put(participant.put("classroomId", classroomId).put("receivedAt", System.currentTimeMillis()))
         packageJson.put("participants", participants)
         persistPackage()
-        writeJson(output, 200, JSONObject().put("ok", true).put("id", participant.optString("studentId", participant.optString("id"))))
+        writeJson(output, 200, JSONObject()
+          .put("ok", true)
+          .put("id", participant.optString("studentId", participant.optString("id")))
+          .put("sessionId", participant.optString("sessionId")))
       }
       method == "POST" && path == "/api/offline/classrooms/$classroomId/grades" -> {
         val grade = JSONObject(body)
@@ -357,6 +405,26 @@ class EduMosLanServerModule : Module() {
       val item = array.optJSONObject(index)
       val itemId = item?.optString("id", item.optString("studentId")) ?: ""
       if (itemId != id) kept.put(item)
+    }
+    for (index in array.length() - 1 downTo 0) {
+      array.remove(index)
+    }
+    for (index in 0 until kept.length()) {
+      array.put(kept.get(index))
+    }
+  }
+
+  private fun removeParticipantDuplicate(array: JSONArray, participant: JSONObject) {
+    val sessionId = participant.optString("sessionId")
+    val studentId = participant.optString("studentId", participant.optString("id"))
+    val email = participant.optString("email").trim().lowercase()
+    val kept = JSONArray()
+    for (index in 0 until array.length()) {
+      val item = array.optJSONObject(index)
+      val sameSession = sessionId.isNotEmpty() && item?.optString("sessionId") == sessionId
+      val sameStudent = studentId.isNotEmpty() && item?.optString("studentId", item.optString("id")) == studentId
+      val sameEmail = email.isNotEmpty() && item?.optString("email")?.trim()?.lowercase() == email
+      if (!sameSession && !sameStudent && !sameEmail) kept.put(item)
     }
     for (index in array.length() - 1 downTo 0) {
       array.remove(index)

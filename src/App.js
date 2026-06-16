@@ -60,7 +60,7 @@ import {
   updateQuiz
 } from "./firebase";
 import { getOfflineStore, getPendingWriteCount, isOnline, listenForOnline, setOfflineStore } from "./offlineStore";
-import { connectToWifiNetwork, isLanServerAvailable, startLanServer } from "../modules/edumos-lan-server/src";
+import { connectToWifiNetwork, isLanServerAvailable, startLanServer, startLocalHotspot } from "../modules/edumos-lan-server/src";
 import { connectToWifiDirectTeacher, discoverWifiDirectTeachers, isWifiDirectAvailable, startTeacherWifiDirectGroup } from "./wifiDirect";
 
 const DEFAULT_STUDENT = { email: "student1@gmail.com", password: "student123" };
@@ -69,6 +69,10 @@ const SCREEN_ROUTES = new Set(["home", "about", "login", "signup", "studentSetup
 const userKey = (role, email) => `${role}__${email.trim().toLowerCase()}`;
 const cleanCompare = value => String(value || "").trim().toLowerCase();
 const logoImage = require("../assets/edumos-logo.png");
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function canUseBrowserHistory() {
   return Platform.OS === "web" && typeof window !== "undefined" && !!window.history && !!window.location?.href;
@@ -886,7 +890,13 @@ function StudentJoinPanel({ user, onConnected }) {
             : "QR read. Wi-Fi Direct prompt did not complete, trying teacher URL...";
           setConnectMessage(fallback);
           if (payload.networkName && payload.networkPassword) {
-            await connectToWifiNetwork(payload.networkName, payload.networkPassword).catch(() => openDeviceSetting("android.settings.WIFI_SETTINGS"));
+            const wifiResult = await connectToWifiNetwork(payload.networkName, payload.networkPassword).catch(() => ({ ok: false }));
+            if (wifiResult.ok) {
+              setDownloadStep("Connected to teacher Wi-Fi. Waiting for module server...", 48);
+              await delay(2500);
+            } else {
+              openDeviceSetting("android.settings.WIFI_SETTINGS");
+            }
           } else if (payload.networkName) {
             openDeviceSetting("android.settings.WIFI_SETTINGS");
           }
@@ -1174,7 +1184,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
   async function hostClassroom() {
     setHostPage("host");
     setIsHosting(false);
-    setHostMessage("Preparing classroom package...");
+    setHostMessage("Preparing classroom resources, quizzes, and grades for offline sharing...");
     const payload = await getClassroomOfflinePackage(classroom.id);
     setPackageText(JSON.stringify(payload));
     const stats = countPackageItems(payload);
@@ -1197,6 +1207,16 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
             setNetworkPassword(qrNetworkPassword);
           }
         }
+        if (!qrDeviceAddress) {
+          setHostMessage("Starting EduMos hotspot fallback...");
+          const hotspot = await startLocalHotspot().catch(error => ({ ok: false, message: error.message }));
+          if (hotspot.ok) {
+            qrNetworkName = hotspot.ssid || qrNetworkName;
+            qrNetworkPassword = hotspot.password || qrNetworkPassword;
+            setNetworkName(qrNetworkName);
+            setNetworkPassword(qrNetworkPassword);
+          }
+        }
         const started = await startLanServer(10000, payload);
         if (started.ok) {
           const hostAddress = p2pHostUrl || started.url || localHostUrl;
@@ -1207,7 +1227,7 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
           }));
           await buildQr(hostAddress, { networkName: qrNetworkName, networkPassword: qrNetworkPassword, deviceAddress: qrDeviceAddress });
           setIsHosting(true);
-          setHostMessage(`Wi-Fi Direct classroom is hosting on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes. Students scan nearby teachers and join without internet.`);
+          setHostMessage(`EduMos group is ready on ${hostAddress}. Sharing ${stats.resources} resources and ${stats.quizzes} quizzes offline. Students scan the QR and the app will connect, download, save, and open the module.`);
           setQueueCount(getPendingWriteCount());
           onPendingChange?.();
           return;
@@ -1233,6 +1253,14 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
       setHostMessage(`Package ready. Start the local backend or share the package JSON. Course ID: ${classroom.id}.`);
     }
     onPendingChange?.();
+  }
+  async function prepareOffline() {
+    setHostMessage("Downloading and caching this classroom for offline sharing...");
+    const payload = await getClassroomOfflinePackage(classroom.id);
+    const stats = countPackageItems(payload);
+    setPackageText(JSON.stringify(payload));
+    setHostMessage(`Offline package ready: ${stats.sections} sections, ${stats.resources} resources, ${stats.quizzes} quizzes. Press Host when students are ready.`);
+    setQueueCount(getPendingWriteCount());
   }
   async function copyPackage() {
     if (!packageText) return;
@@ -1284,6 +1312,10 @@ function TeacherHostPanel({ classroom, onPendingChange }) {
           <Pressable accessibilityRole="button" focusable tabIndex={0} onPress={hostClassroom} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
             <Text style={styles.modeTitle}>Host</Text>
             <Text style={styles.bodyText}>Start EduMos sharing on this teacher phone and show QR details for students.</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" focusable tabIndex={0} onPress={prepareOffline} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
+            <Text style={styles.modeTitle}>Prepare Offline</Text>
+            <Text style={styles.bodyText}>Download resources, quizzes, grades, and sections onto this teacher phone before class.</Text>
           </Pressable>
           <Pressable accessibilityRole="button" focusable tabIndex={0} onPress={openConnectPage} style={({ hovered, focused }) => [styles.hostChoice, (hovered || focused) && styles.clickableCardFocus]}>
             <Text style={styles.modeTitle}>Connect LAN/EduMos Device</Text>

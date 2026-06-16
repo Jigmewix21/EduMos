@@ -615,6 +615,7 @@ export function importClassroomOfflinePackage(payload, student) {
       id: student.id,
       classroomId: classroom.id,
       studentId: student.id,
+      sessionId: getStudentSessionId(student),
       name: student.name,
       email: student.email,
       joinedAt: Date.now()
@@ -628,6 +629,18 @@ export function importClassroomOfflinePackage(payload, student) {
     connectedPackages: { ...(store.connectedPackages || {}), [classroom.id]: payload }
   }));
   return { ok: true, classroom, participant: joinedParticipant };
+}
+
+function getStudentSessionId(student) {
+  const emailKey = (student?.email || student?.id || "student").trim().toLowerCase();
+  const existing = getOfflineStore().studentSessions?.[emailKey];
+  if (existing) return existing;
+  const sessionId = `session_${emailKey.replace(/[^a-z0-9]/g, "_")}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+  setOfflineStore(store => ({
+    ...store,
+    studentSessions: { ...(store.studentSessions || {}), [emailKey]: sessionId }
+  }));
+  return sessionId;
 }
 
 export async function connectToTeacherHost(hostUrl, classroomId, student) {

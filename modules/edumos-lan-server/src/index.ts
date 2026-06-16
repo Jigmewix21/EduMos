@@ -14,6 +14,8 @@ type LanServerModule = {
   isRunning(): boolean;
   getBaseUrl(): string;
   connectToWifiNetwork(ssid: string, password: string): Promise<{ ok: boolean; message?: string }>;
+  startLocalHotspot(): Promise<{ ok: boolean; ssid?: string; password?: string; message?: string }>;
+  stopLocalHotspot(): Promise<{ ok: boolean }>;
 };
 
 let nativeModule: LanServerModule | null = null;
@@ -53,4 +55,14 @@ export function isLanServerRunning() {
 export async function connectToWifiNetwork(ssid: string, password: string) {
   if (!nativeModule) return { ok: false, message: "Wi-Fi connection prompt is available only in the Android APK." };
   return nativeModule.connectToWifiNetwork(ssid, password);
+}
+
+export async function startLocalHotspot() {
+  if (!nativeModule) return { ok: false, message: "Local hotspot is available only in the Android APK." };
+  return nativeModule.startLocalHotspot();
+}
+
+export async function stopLocalHotspot() {
+  if (!nativeModule) return { ok: false };
+  return nativeModule.stopLocalHotspot();
 }
