@@ -750,6 +750,18 @@ export async function fetchTeacherHostSnapshot(hostUrl, classroomId, options = {
   return payload;
 }
 
+export async function pingTeacherHost(hostUrl) {
+  const cleanUrl = normalizeHostUrl(hostUrl);
+  if (!cleanUrl) return { ok: false, message: "No teacher host URL" };
+  const response = await retryLocalRequest(() => withTimeout(
+    fetch(`${cleanUrl}/health`),
+    6000,
+    "Teacher host health check timed out"
+  ), 2, 800);
+  if (!response.ok) throw new Error("Teacher host health check failed");
+  return response.json();
+}
+
 async function fetchClassroomPackage(hostUrl, classroomId, timeoutMessage = "Could not reach teacher group") {
   const cleanUrl = normalizeHostUrl(hostUrl);
   const response = await retryLocalRequest(() => withTimeout(

@@ -48,6 +48,7 @@ import {
   fetchLiveQuestionFromTeacherHost,
   publishClassroomToTeacherHost,
   publishLiveQuestionToTeacherHost,
+  pingTeacherHost,
   removeParticipant,
   saveGradeCell,
   saveGrade,
@@ -695,10 +696,19 @@ function StudentJoinPanel({ user, onConnected }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [nearbyPackages, setNearbyPackages] = useState([]);
   const [wifiDirectDevices, setWifiDirectDevices] = useState([]);
+  const [connectionLog, setConnectionLog] = useState([]);
+
+  function addConnectionLog(status, text) {
+    setConnectionLog(items => [
+      { id: `${Date.now()}_${Math.random().toString(36).slice(2)}`, status, text, at: new Date().toLocaleTimeString() },
+      ...items
+    ].slice(0, 8));
+  }
 
   function setDownloadStep(status, progress) {
     setDownloadStatus(status);
     setDownloadProgress(progress);
+    addConnectionLog("step", status);
   }
 
   function completeDownload(result, fallbackStats) {
@@ -737,6 +747,9 @@ function StudentJoinPanel({ user, onConnected }) {
       try {
         setHostUrl(candidate);
         setConnectMessage(`Checking teacher module at ${candidate}...`);
+        addConnectionLog("check", `Checking teacher module at ${candidate}`);
+        await pingTeacherHost(candidate);
+        addConnectionLog("ok", `Teacher host reachable at ${candidate}`);
         const result = await connectToTeacherHost(candidate, classroomId, user);
         if (result.ok) {
           setDownloadStep("Saving course for offline use...", 85);
@@ -747,6 +760,7 @@ function StudentJoinPanel({ user, onConnected }) {
         }
         lastResult = result;
       } catch (error) {
+        addConnectionLog("fail", `${candidate} failed: ${error.message}`);
         lastError = error;
       }
     }
@@ -792,6 +806,7 @@ function StudentJoinPanel({ user, onConnected }) {
       setDownloadStep("Connecting to teacher device...", 15);
       setConnectMessage(`Connecting to ${device.deviceName || "teacher"} with Wi-Fi Direct...`);
       const connection = await connectToWifiDirectTeacher(device.deviceAddress);
+      addConnectionLog("ok", `Wi-Fi Direct connected: ${connection.hostUrl}`);
       setHostUrl(connection.hostUrl);
       setDownloadStep("Connected to teacher. Receiving classroom resources...", 55);
       setConnectMessage(`Connected to teacher device. Downloading course from ${connection.hostUrl}...`);
@@ -877,14 +892,17 @@ function StudentJoinPanel({ user, onConnected }) {
       }
       setHostUrl(payload.url);
       setHostClassroomId(payload.classroomId);
+      addConnectionLog("ok", `QR read for course ${payload.classroomId}`);
       setDownloadStep("QR scanned. Connecting to teacher...", 20);
       setConnectMessage("QR scanned. Connecting to teacher...");
       let teacherUrl = payload.url;
       if ((payload.deviceAddress || payload.networkName) && Platform.OS === "android") {
         try {
           teacherUrl = await connectWifiDirectFromQr(payload) || teacherUrl;
+          addConnectionLog("ok", `Wi-Fi Direct route ready: ${teacherUrl}`);
           setHostUrl(teacherUrl);
         } catch (_error) {
+          addConnectionLog("fail", `Wi-Fi Direct failed: ${_error.message || "system prompt not completed"}`);
           const fallback = payload.networkName
             ? `QR read. Connect to ${payload.networkName}${payload.networkPassword ? ` with password ${payload.networkPassword}` : ""}, then scan again or press Join Course.`
             : "QR read. Wi-Fi Direct prompt did not complete, trying teacher URL...";
@@ -892,9 +910,11 @@ function StudentJoinPanel({ user, onConnected }) {
           if (payload.networkName && payload.networkPassword) {
             const wifiResult = await connectToWifiNetwork(payload.networkName, payload.networkPassword).catch(() => ({ ok: false }));
             if (wifiResult.ok) {
+              addConnectionLog("ok", `Connected to Wi-Fi ${payload.networkName}`);
               setDownloadStep("Connected to teacher Wi-Fi. Waiting for module server...", 48);
               await delay(2500);
             } else {
+              addConnectionLog("fail", `Wi-Fi prompt did not connect to ${payload.networkName}`);
               openDeviceSetting("android.settings.WIFI_SETTINGS");
             }
           } else if (payload.networkName) {
@@ -994,6 +1014,14 @@ function StudentJoinPanel({ user, onConnected }) {
         <Button title="Join Course" onPress={connectByHost} />
       </View>
       {!!connectMessage && <Text style={styles.noticeText}>{connectMessage}</Text>}
+      {!!connectionLog.length && (
+        <View style={styles.connectionLog}>
+          <Text style={styles.howTitle}>Connection Test Log</Text>
+          {connectionLog.map(item => (
+            <Text key={item.id} style={styles.logLine}>{item.at} | {item.status.toUpperCase()} | {item.text}</Text>
+          ))}
+        </View>
+      )}
     </Card>
   );
 }
@@ -2256,6 +2284,8 @@ const styles = StyleSheet.create({
   shareCode: { color: "#111827", backgroundColor: "white", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 12, fontWeight: "900", overflow: "hidden" },
   manualJoin: { backgroundColor: "#f8fbff", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 16, gap: 10 },
   noticeText: { color: "#155e75", backgroundColor: "#e0f7fa", borderRadius: 8, padding: 12, fontWeight: "800", overflow: "hidden" },
+  connectionLog: { backgroundColor: "#0f172a", borderRadius: 8, padding: 14, gap: 8 },
+  logLine: { color: "#dbeafe", fontSize: 12, lineHeight: 18, fontWeight: "700" },
   tabs: { flexDirection: "row", gap: 10, flexWrap: "wrap", marginVertical: 12 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   progressCard: { backgroundColor: "#f8fafc", borderColor: "#d8e0ea", borderWidth: 1, borderRadius: 8, padding: 18, gap: 8 },
